@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     thread::{self},
     time::Duration,
 };
@@ -57,29 +57,29 @@ impl OrderBOOkTCPService {
 struct OrderBookHttpService {}
 
 impl OrderBookHttpService {
-    pub async fn enable(buy_orders: Arc<Mutex<OrderTree>>, sell_orders: Arc<Mutex<OrderTree>>) {
+    pub async fn enable(bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>) {
         // build our application with a route
         let app = Router::new()
             .route(
                 "/buy",
                 post({
-                    let buy_order = Arc::clone(&buy_orders);
-                    move |body| Self::buy(body, buy_order)
+                    let bids = Arc::clone(&bids);
+                    move |body| Self::buy(body, bids)
                 }),
             )
             .route(
                 "/sell",
                 post({
-                    let sell_orders = Arc::clone(&sell_orders);
-                    move |body| Self::sell(body, sell_orders)
+                    let asks = Arc::clone(&asks);
+                    move |body| Self::sell(body, asks)
                 }),
             )
             .route(
                 "/cancel",
                 post({
-                    let buy_order = Arc::clone(&buy_orders);
-                    let sell_orders = Arc::clone(&sell_orders);
-                    move |body| Self::cancel(body, buy_order, sell_orders)
+                    let bids = Arc::clone(&bids);
+                    let asks = Arc::clone(&asks);
+                    move |body| Self::cancel(body, bids, asks)
                 }),
             );
         // run our app with hyper, listening globally on port 3000
@@ -89,8 +89,8 @@ impl OrderBookHttpService {
         axum::serve(listener, app).await.unwrap();
     }
     /// http buy interface processing
-    async fn buy(Json(order): Json<Order>, buy: Arc<Mutex<OrderTree>>) -> impl IntoResponse {
-        let buy = buy.lock();
+    async fn buy(Json(order): Json<Order>, buy: Arc<RwLock<OrderTree>>) -> impl IntoResponse {
+        let buy = buy.write();
         buy.unwrap().push(order.clone());
         (
             StatusCode::CREATED,
@@ -99,8 +99,8 @@ impl OrderBookHttpService {
         )
     }
     /// http sell interface processing
-    async fn sell(Json(order): Json<Order>, sell: Arc<Mutex<OrderTree>>) -> impl IntoResponse {
-        let sell = sell.lock();
+    async fn sell(Json(order): Json<Order>, sell: Arc<RwLock<OrderTree>>) -> impl IntoResponse {
+        let sell = sell.write();
         sell.unwrap().push(order.clone());
         (
             StatusCode::OK,
@@ -111,8 +111,8 @@ impl OrderBookHttpService {
     /// http cancel order interface processing
     async fn cancel(
         Json(order): Json<Order>,
-        buy: Arc<Mutex<OrderTree>>,
-        sell: Arc<Mutex<OrderTree>>,
+        buy: Arc<RwLock<OrderTree>>,
+        sell: Arc<RwLock<OrderTree>>,
     ) -> impl IntoResponse {
         format!("push order cancel order").to_string()
     }
@@ -121,12 +121,9 @@ impl OrderBookHttpService {
 /// order book background service, the service will continue to run until the process ends.
 struct BGService {}
 impl BGService {
-    pub async fn enable(buy_orders: Arc<Mutex<OrderTree>>, sell_orders: Arc<Mutex<OrderTree>>) {
-        let _buy_order = Arc::clone(&buy_orders);
-        let _sell_orders = Arc::clone(&sell_orders);
+    pub async fn enable(bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>) {
         loop {
-            println!("1111");
-            thread::sleep(Duration::from_millis(3000));
+            thread::sleep(Duration::from_millis(5000));
         }
     }
 }
@@ -244,36 +241,32 @@ impl OrderTree {
 
 #[derive(Debug, Clone)]
 /// border book
-pub struct OrderBook<T>
-where
-    T: Matcher + Clone,
-{
-    bids: Arc<Mutex<OrderTree>>,
-    asks: Arc<Mutex<OrderTree>>,
-    match_engine: T,
+pub struct OrderBook {
+    bids: Arc<RwLock<OrderTree>>,
+    asks: Arc<RwLock<OrderTree>>,
 }
 
-impl<T> OrderBook<T>
-where
-    T: Matcher + Clone,
-{
-    pub fn new(match_engine: T) -> Self
-    where
-        T: Matcher + Clone,
-    {
+impl OrderBook {
+    pub fn new() -> Self {
         Self {
-            bids: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
-            asks: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
-            match_engine: match_engine,
+            bids: Arc::new(RwLock::new(OrderTree::new(None, None, None, None))),
+            asks: Arc::new(RwLock::new(OrderTree::new(None, None, None, None))),
         }
     }
     /// start up order book
-    pub async fn startup(&self, orderchannel: Vec<OrderSourceChannel>) {
+    pub async fn startup<T>(&self, match_engine: T, orderchannel: Vec<OrderSourceChannel>)
+    where
+        T: Matcher,
+    {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
-        let (buy_order, sell_order) = self.get_order_copy();
+        // add order match engine
+        let (bids, asks) = self.get_order_copy();
+        let match_engine = match_engine.match_order(bids, asks);
+        tasks.push(tokio::spawn(match_engine));
         // add order book backend service
+        let (buy_order, sell_order) = self.get_order_copy();
         tasks.push(tokio::spawn(async move {
-            BGService::enable(buy_order.clone(), sell_order).await;
+            BGService::enable(buy_order, sell_order).await;
         }));
         // added network channel processing tasks related to network order placement.
         orderchannel.iter().for_each(|c| match c {
@@ -298,7 +291,6 @@ where
             join!(t);
         }
     }
-
     /// local push order
     pub fn local_push_order(&self, order: Order) {
         let (mut a, mut b) = Self::get_order_copy(&self);
@@ -311,18 +303,18 @@ where
     }
     /// push order specific implementation logic.
     fn push_order(
-        bids: &mut Arc<Mutex<OrderTree>>,
-        asks: &mut Arc<Mutex<OrderTree>>,
+        bids: &mut Arc<RwLock<OrderTree>>,
+        asks: &mut Arc<RwLock<OrderTree>>,
         order: Order,
     ) {
         match order.order_direction {
             OrderDirection::Buy => {
-                let mut bids = bids.lock().unwrap();
+                let mut bids = bids.write().unwrap();
                 bids.push(order);
                 drop(bids);
             }
             OrderDirection::Sell => {
-                let mut asks = asks.lock().unwrap();
+                let mut asks = asks.write().unwrap();
                 asks.push(order);
                 drop(asks);
             }
@@ -335,8 +327,8 @@ where
     /// get order num
     pub fn order_num(&self, order: Order) -> (u64, u64) {
         let (bids, asks) = self.get_order_copy();
-        let bids = bids.lock().unwrap();
-        let asks = asks.lock().unwrap();
+        let bids = bids.read().unwrap();
+        let asks = asks.read().unwrap();
         let bids_num = if bids.is_empty() {
             0
         } else {
@@ -352,7 +344,7 @@ where
     /// order book storage
     pub fn storage() {}
     /// get order copy
-    fn get_order_copy(&self) -> (Arc<Mutex<OrderTree>>, Arc<Mutex<OrderTree>>) {
+    fn get_order_copy(&self) -> (Arc<RwLock<OrderTree>>, Arc<RwLock<OrderTree>>) {
         (Arc::clone(&self.bids), Arc::clone(&self.asks))
     }
     /// update push buy order before event
@@ -360,8 +352,8 @@ where
         &mut self,
         push_buy_order_before_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut buy_orders = self.bids.lock().unwrap();
-        buy_orders.push_buy_order_before_event = push_buy_order_before_event;
+        let mut bids = self.bids.write().unwrap();
+        bids.push_buy_order_before_event = push_buy_order_before_event;
         self.clone()
     }
     /// update push buy order after event
@@ -369,8 +361,8 @@ where
         &mut self,
         push_buy_order_after_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut buy_orders = self.bids.lock().unwrap();
-        buy_orders.push_buy_order_after_event = push_buy_order_after_event;
+        let mut bids = self.bids.write().unwrap();
+        bids.push_buy_order_after_event = push_buy_order_after_event;
         self.clone()
     }
     /// update push sell order before event
@@ -378,8 +370,8 @@ where
         &mut self,
         push_sell_order_before_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut sell_orders = self.asks.lock().unwrap();
-        sell_orders.push_sell_order_before_event = push_sell_order_before_event;
+        let mut asks = self.asks.write().unwrap();
+        asks.push_sell_order_before_event = push_sell_order_before_event;
         self.clone()
     }
     /// update push sell order after event
@@ -387,8 +379,8 @@ where
         &mut self,
         push_sell_order_after_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut sell_orders = self.asks.lock().unwrap();
-        sell_orders.push_sell_order_after_event = push_sell_order_after_event;
+        let mut asks = self.asks.write().unwrap();
+        asks.push_sell_order_after_event = push_sell_order_after_event;
         self.clone()
     }
 }
