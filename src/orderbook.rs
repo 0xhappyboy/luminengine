@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{matcher::MatchEngine, types::PushOrderEvent};
+use crate::{
+    matcher::{MatchEngine, Matcher},
+    types::PushOrderEvent,
+};
 
 use axum::{
     Json, Router,
@@ -121,7 +124,10 @@ impl BGService {
     pub async fn enable(buy_orders: Arc<Mutex<OrderTree>>, sell_orders: Arc<Mutex<OrderTree>>) {
         let _buy_order = Arc::clone(&buy_orders);
         let _sell_orders = Arc::clone(&sell_orders);
-        loop {}
+        loop {
+            println!("1111");
+            thread::sleep(Duration::from_millis(3000));
+        }
     }
 }
 
@@ -145,7 +151,7 @@ impl Order {
 
 /// order tree
 #[derive(Debug, Clone)]
-struct OrderTree {
+pub struct OrderTree {
     tree: HashMap<String, Vec<Order>>,
     // push buy order before event
     pub push_buy_order_before_event: Option<PushOrderEvent>,
@@ -236,19 +242,28 @@ impl OrderTree {
     pub fn cancel(&mut self, order: Order) {}
 }
 
-/// border book
 #[derive(Debug, Clone)]
-pub struct OrderBook {
-    buy_orders: Arc<Mutex<OrderTree>>,
-    sell_orders: Arc<Mutex<OrderTree>>,
-    match_engine: MatchEngine,
+/// border book
+pub struct OrderBook<T>
+where
+    T: Matcher + Clone,
+{
+    bids: Arc<Mutex<OrderTree>>,
+    asks: Arc<Mutex<OrderTree>>,
+    match_engine: T,
 }
 
-impl OrderBook {
-    pub fn new(match_engine: MatchEngine) -> Self {
+impl<T> OrderBook<T>
+where
+    T: Matcher + Clone,
+{
+    pub fn new(match_engine: T) -> Self
+    where
+        T: Matcher + Clone,
+    {
         Self {
-            buy_orders: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
-            sell_orders: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
+            bids: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
+            asks: Arc::new(Mutex::new(OrderTree::new(None, None, None, None))),
             match_engine: match_engine,
         }
     }
@@ -278,6 +293,7 @@ impl OrderBook {
                 todo!()
             }
         });
+
         for t in tasks {
             join!(t);
         }
@@ -295,20 +311,20 @@ impl OrderBook {
     }
     /// push order specific implementation logic.
     fn push_order(
-        buy_orders: &mut Arc<Mutex<OrderTree>>,
-        sell_orders: &mut Arc<Mutex<OrderTree>>,
+        bids: &mut Arc<Mutex<OrderTree>>,
+        asks: &mut Arc<Mutex<OrderTree>>,
         order: Order,
     ) {
         match order.order_direction {
             OrderDirection::Buy => {
-                let mut buy_orders = buy_orders.lock().unwrap();
-                buy_orders.push(order);
-                drop(buy_orders);
+                let mut bids = bids.lock().unwrap();
+                bids.push(order);
+                drop(bids);
             }
             OrderDirection::Sell => {
-                let mut sell_orders = sell_orders.lock().unwrap();
-                sell_orders.push(order);
-                drop(sell_orders);
+                let mut asks = asks.lock().unwrap();
+                asks.push(order);
+                drop(asks);
             }
         }
     }
@@ -318,33 +334,33 @@ impl OrderBook {
     pub fn matching_trading(&self) {}
     /// get order num
     pub fn order_num(&self, order: Order) -> (u64, u64) {
-        let (buy_orders, sell_orders) = self.get_order_copy();
-        let buy_orders = buy_orders.lock().unwrap();
-        let sell_orders = sell_orders.lock().unwrap();
-        let buy_num = if buy_orders.is_empty() {
+        let (bids, asks) = self.get_order_copy();
+        let bids = bids.lock().unwrap();
+        let asks = asks.lock().unwrap();
+        let bids_num = if bids.is_empty() {
             0
         } else {
-            buy_orders.get_order_num_by_price(order.price)
+            bids.get_order_num_by_price(order.price)
         };
-        let sell_num = if sell_orders.is_empty() {
+        let asks_num = if asks.is_empty() {
             0
         } else {
-            sell_orders.get_order_num_by_price(order.price)
+            asks.get_order_num_by_price(order.price)
         };
-        (buy_num.try_into().unwrap(), sell_num.try_into().unwrap())
+        (bids_num.try_into().unwrap(), asks_num.try_into().unwrap())
     }
     /// order book storage
     pub fn storage() {}
     /// get order copy
     fn get_order_copy(&self) -> (Arc<Mutex<OrderTree>>, Arc<Mutex<OrderTree>>) {
-        (Arc::clone(&self.buy_orders), Arc::clone(&self.sell_orders))
+        (Arc::clone(&self.bids), Arc::clone(&self.asks))
     }
     /// update push buy order before event
     pub fn update_push_buy_order_before_event(
         &mut self,
         push_buy_order_before_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut buy_orders = self.buy_orders.lock().unwrap();
+        let mut buy_orders = self.bids.lock().unwrap();
         buy_orders.push_buy_order_before_event = push_buy_order_before_event;
         self.clone()
     }
@@ -353,7 +369,7 @@ impl OrderBook {
         &mut self,
         push_buy_order_after_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut buy_orders = self.buy_orders.lock().unwrap();
+        let mut buy_orders = self.bids.lock().unwrap();
         buy_orders.push_buy_order_after_event = push_buy_order_after_event;
         self.clone()
     }
@@ -362,7 +378,7 @@ impl OrderBook {
         &mut self,
         push_sell_order_before_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut sell_orders = self.sell_orders.lock().unwrap();
+        let mut sell_orders = self.asks.lock().unwrap();
         sell_orders.push_sell_order_before_event = push_sell_order_before_event;
         self.clone()
     }
@@ -371,7 +387,7 @@ impl OrderBook {
         &mut self,
         push_sell_order_after_event: Option<PushOrderEvent>,
     ) -> Self {
-        let mut sell_orders = self.sell_orders.lock().unwrap();
+        let mut sell_orders = self.asks.lock().unwrap();
         sell_orders.push_sell_order_after_event = push_sell_order_after_event;
         self.clone()
     }
