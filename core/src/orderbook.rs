@@ -1,24 +1,13 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     thread::{self},
     time::Duration,
 };
 
-use crate::{
-    http::OrderBookHttpService,
-    matcher::{MatchEngine, Matcher},
-    types::PushOrderEvent,
-};
+use crate::{matcher::Matcher, types::PushOrderEvent};
 
-use axum::{
-    Json, Router,
-    http::{StatusCode, header},
-    response::IntoResponse,
-    routing::post,
-};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::{join, task::JoinHandle};
 
 /// order direction enumeration
@@ -61,14 +50,16 @@ impl Target {
 /// for each order abstract
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Order {
-    price: f64,
-    order_direction: OrderDirection,
-    ex: Option<String>,
+    pub symbol: String,
+    pub price: f64,
+    pub order_direction: OrderDirection,
+    pub ex: Option<String>,
 }
 
 impl Order {
-    pub fn new(price: f64, order_direction: OrderDirection) -> Self {
+    pub fn new(symbol: String, price: f64, order_direction: OrderDirection) -> Self {
         Self {
+            symbol: symbol,
             price: price,
             order_direction: order_direction,
             ex: None,
@@ -79,6 +70,7 @@ impl Order {
 /// order tree
 #[derive(Debug, Clone)]
 pub struct OrderTree {
+    pub symbol: String,
     tree: HashMap<String, Vec<Order>>,
     // push buy order before event
     pub push_buy_order_before_event: Option<PushOrderEvent>,
@@ -92,12 +84,14 @@ pub struct OrderTree {
 
 impl OrderTree {
     pub fn new(
+        symbol: String,
         push_buy_order_before_event: Option<PushOrderEvent>,
         push_buy_order_after_event: Option<PushOrderEvent>,
         push_sell_order_before_event: Option<PushOrderEvent>,
         push_sell_order_after_event: Option<PushOrderEvent>,
     ) -> Self {
         Self {
+            symbol: symbol,
             tree: HashMap::<String, Vec<Order>>::default(),
             push_buy_order_before_event: push_buy_order_before_event,
             push_buy_order_after_event: push_buy_order_after_event,
@@ -172,19 +166,33 @@ impl OrderTree {
 #[derive(Debug, Clone)]
 /// border book
 pub struct OrderBook {
-    bids: Arc<RwLock<OrderTree>>,
-    asks: Arc<RwLock<OrderTree>>,
+    pub symbol: String,
+    pub bids: Arc<RwLock<OrderTree>>,
+    pub asks: Arc<RwLock<OrderTree>>,
 }
 
 impl OrderBook {
-    pub fn new() -> Self {
+    pub fn new(symbol: String) -> Self {
         Self {
-            bids: Arc::new(RwLock::new(OrderTree::new(None, None, None, None))),
-            asks: Arc::new(RwLock::new(OrderTree::new(None, None, None, None))),
+            symbol: symbol.clone(),
+            bids: Arc::new(RwLock::new(OrderTree::new(
+                symbol.clone(),
+                None,
+                None,
+                None,
+                None,
+            ))),
+            asks: Arc::new(RwLock::new(OrderTree::new(
+                symbol.clone(),
+                None,
+                None,
+                None,
+                None,
+            ))),
         }
     }
     /// start up order book
-    pub async fn startup<T>(&self, match_engine: T, orderchannel: Vec<OrderSourceChannel>)
+    pub async fn startup<T>(&self, match_engine: T)
     where
         T: Matcher,
     {
@@ -198,27 +206,8 @@ impl OrderBook {
         tasks.push(tokio::spawn(async move {
             BGService::enable(buy_order, sell_order).await;
         }));
-        // added network channel processing tasks related to network order placement.
-        orderchannel.iter().for_each(|c| match c {
-            OrderSourceChannel::Http => {
-                // handle orders placed via the http protocol.
-                let (buy_order, sell_order) = self.get_order_copy();
-                tasks.push(tokio::spawn(async move {
-                    OrderBookHttpService::enable(buy_order.clone(), sell_order).await;
-                }));
-            }
-            OrderSourceChannel::Tcp => {
-                // handle orders placed via the tcp protocol.
-                todo!()
-            }
-            OrderSourceChannel::Rcp => {
-                // handle orders placed via the rcp.
-                todo!()
-            }
-        });
-
         for t in tasks {
-            join!(t);
+            let _ = join!(t);
         }
     }
     /// local push order
@@ -227,7 +216,11 @@ impl OrderBook {
         tokio::spawn(async move {
             loop {
                 thread::sleep(Duration::from_millis(2000));
-                Self::push_order(&mut a, &mut b, Order::new(1111.1, OrderDirection::Buy));
+                Self::push_order(
+                    &mut a,
+                    &mut b,
+                    Order::new(order.symbol.clone(), 1111.1, OrderDirection::Buy),
+                );
             }
         });
     }

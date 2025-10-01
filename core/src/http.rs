@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 use axum::{
     Json, Router,
@@ -6,41 +9,49 @@ use axum::{
     response::IntoResponse,
     routing::post,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::orderbook::{Order, OrderBook, OrderTree};
+use crate::orderbook::{Order, OrderBook, OrderDirection, OrderTree};
 
 const HTTP_LISTENER_PORT: &str = "0.0.0.0:8080";
 
 /// order book http service, HTTP service for handling order books
-pub struct OrderBookHttpService {
-    orderbook: Arc<RwLock<Vec<OrderBook>>>,
-}
+pub struct OrderBookHttpService {}
 
 impl OrderBookHttpService {
-    pub async fn enable(bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>) {
+    pub async fn enable(
+        orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
+        // bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>
+    ) {
         // build our application with a route
         let app = Router::new()
             .route(
+                "/orderbook/create",
+                post({
+                    let orderbooks = Arc::clone(&orderbooks);
+                    move |body| Self::create_order_book(body, orderbooks)
+                }),
+            )
+            .route(
                 "/buy",
                 post({
-                    let bids = Arc::clone(&bids);
-                    move |body| Self::buy(body, bids)
+                    let orderbooks = Arc::clone(&orderbooks);
+                    move |body| Self::buy(body, orderbooks)
                 }),
             )
             .route(
                 "/sell",
                 post({
-                    let asks = Arc::clone(&asks);
-                    move |body| Self::sell(body, asks)
+                    let orderbooks = Arc::clone(&orderbooks);
+                    move |body| Self::sell(body, orderbooks)
                 }),
             )
             .route(
                 "/cancel",
                 post({
-                    let bids = Arc::clone(&bids);
-                    let asks = Arc::clone(&asks);
-                    move |body| Self::cancel(body, bids, asks)
+                    let orderbooks = Arc::clone(&orderbooks);
+                    move |body| Self::cancel(body, orderbooks)
                 }),
             );
         // run our app with hyper, listening globally on port 3000
@@ -49,32 +60,79 @@ impl OrderBookHttpService {
             .unwrap();
         axum::serve(listener, app).await.unwrap();
     }
-    /// http buy interface processing
-    async fn buy(Json(order): Json<Order>, buy: Arc<RwLock<OrderTree>>) -> impl IntoResponse {
-        let buy = buy.write();
-        buy.unwrap().push(order.clone());
+    /// create order book
+    async fn create_order_book(
+        Json(vo): Json<CreateOrderBookVO>,
+        orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
+    ) -> impl IntoResponse {
+        let mut orderbooks = orderbooks.write().unwrap();
+        orderbooks.insert(vo.clone().symbol, vo.to_orderbook());
         (
             StatusCode::CREATED,
             [(header::CONTENT_TYPE, "application/json")],
-            Json(json!({ "message": "order placed successfully","request params":order.clone() })),
+            Json(
+                json!({ "message": "order placed successfully","request params":orderbooks.len(),"order book value":orderbooks.len().to_string()}),
+            ),
+        )
+    }
+    /// http buy interface processing
+    async fn buy(
+        Json(vo): Json<OrderVO>,
+        orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
+    ) -> impl IntoResponse {
+        (
+            StatusCode::CREATED,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(json!({ "message": "order placed successfully","request params":vo.to_order() })),
         )
     }
     /// http sell interface processing
-    async fn sell(Json(order): Json<Order>, sell: Arc<RwLock<OrderTree>>) -> impl IntoResponse {
-        let sell = sell.write();
-        sell.unwrap().push(order.clone());
+    async fn sell(
+        Json(vo): Json<OrderVO>,
+        orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
+    ) -> impl IntoResponse {
         (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],
-            Json(json!({ "message": "order placed successfully","request params":order.clone() })),
+            Json(json!({ "message": "order placed successfully","request params":vo.to_order() })),
         )
     }
     /// http cancel order interface processing
     async fn cancel(
-        Json(order): Json<Order>,
-        buy: Arc<RwLock<OrderTree>>,
-        sell: Arc<RwLock<OrderTree>>,
+        Json(vo): Json<OrderVO>,
+        orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
     ) -> impl IntoResponse {
         format!("push order cancel order").to_string()
+    }
+}
+
+// create order book view object
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct CreateOrderBookVO {
+    pub symbol: String,
+}
+impl CreateOrderBookVO {
+    pub fn to_orderbook(&self) -> OrderBook {
+        OrderBook::new(self.symbol.clone())
+    }
+}
+
+// order view object
+#[derive(Deserialize, Serialize, Debug, Clone)]
+struct OrderVO {
+    pub symbol: String,
+    pub price: f64,
+    pub order_direction: OrderDirection,
+    pub ex: Option<String>,
+}
+
+impl OrderVO {
+    pub fn to_order(&self) -> Order {
+        let order = Order::new(
+            self.symbol.clone(),
+            self.price,
+            self.order_direction.clone(),
+        );
+        order
     }
 }
