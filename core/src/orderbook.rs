@@ -7,6 +7,7 @@ use std::{
 
 use crate::{matcher::Matcher, types::PushOrderEvent};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{join, task::JoinHandle};
 
@@ -40,18 +41,22 @@ impl Target {
 /// for each order abstract
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Order {
+    pub id: String,
     pub symbol: String,
     pub price: f64,
     pub order_direction: OrderDirection,
+    pub crt_time: String,
     pub ex: Option<String>,
 }
 
 impl Order {
-    pub fn new(symbol: String, price: f64, order_direction: OrderDirection) -> Self {
+    pub fn new(id: String, symbol: String, price: f64, order_direction: OrderDirection) -> Self {
         Self {
+            id: id,
             symbol: symbol,
             price: price,
             order_direction: order_direction,
+            crt_time: Utc::now().to_string(),
             ex: None,
         }
     }
@@ -150,6 +155,14 @@ impl OrderTree {
             0
         }
     }
+    /// get order list by price
+    pub fn get_order_vec_by_price(&self, price: f64) -> Vec<Order> {
+        if self.tree.contains_key(&price.to_string()) {
+            self.tree.get(&price.to_string()).unwrap().to_vec()
+        } else {
+            vec![]
+        }
+    }
     pub fn get_price_num(&self) -> u64 {
         self.tree.len().try_into().unwrap()
     }
@@ -160,15 +173,16 @@ impl OrderTree {
 /// border book
 pub struct OrderBook {
     pub symbol: String,
+    pub target: Arc<RwLock<Target>>,
     pub bids: Arc<RwLock<OrderTree>>,
     pub asks: Arc<RwLock<OrderTree>>,
-    pub matching: Arc<Mutex<bool>>,
 }
 
 impl OrderBook {
     pub fn new(symbol: String) -> Self {
         Self {
             symbol: symbol.clone(),
+            target: Arc::new(RwLock::new(Target::new(0.0))),
             bids: Arc::new(RwLock::new(OrderTree::new(
                 symbol.clone(),
                 None,
@@ -183,7 +197,6 @@ impl OrderBook {
                 None,
                 None,
             ))),
-            matching: Arc::new(Mutex::new(false)),
         }
     }
     // enble matcher engine

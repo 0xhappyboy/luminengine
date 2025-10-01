@@ -5,10 +5,11 @@ use std::{
 
 use axum::{
     Json, Router,
+    extract::Query,
     handler::Handler,
     http::{StatusCode, header},
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -53,12 +54,52 @@ impl OrderBookHttpService {
                     let orderbooks = Arc::clone(&orderbooks);
                     move |body| Self::cancel(body, orderbooks)
                 }),
+            )
+            .route(
+                "/getOrderNumByPrice",
+                get({ move |path| Self::get_order_num_by_price(path, orderbooks) }),
             );
         // run our app with hyper, listening globally on port 3000
         let listener = tokio::net::TcpListener::bind(HTTP_LISTENER_PORT)
             .await
             .unwrap();
         axum::serve(listener, app).await.unwrap();
+    }
+    // web api, get order num by price.
+    async fn get_order_num_by_price(
+        Query(vo): Query<OrderVO>,
+        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
+    ) -> impl IntoResponse {
+        let mut orderbooks = orderbooks.read().unwrap();
+        let mut num = 0;
+        if orderbooks.contains_key(&vo.clone().symbol) {
+            let orderbook = orderbooks.get(&vo.clone().symbol).unwrap();
+            match vo.order_direction {
+                OrderDirection::Buy => {
+                    num = orderbook
+                        .read()
+                        .unwrap()
+                        .bids
+                        .read()
+                        .unwrap()
+                        .get_order_num_by_price(vo.price);
+                }
+                OrderDirection::Sell => {
+                    num = orderbook
+                        .read()
+                        .unwrap()
+                        .asks
+                        .read()
+                        .unwrap()
+                        .get_order_num_by_price(vo.price);
+                }
+            }
+        }
+        (
+            StatusCode::EXPECTATION_FAILED,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(json!({ "message": "ok","data":num})),
+        )
     }
     /// create order book
     async fn create_order_book(
@@ -148,6 +189,7 @@ struct OrderVO {
 impl OrderVO {
     pub fn to_order(&self) -> Order {
         let order = Order::new(
+            "1".to_string(),
             self.symbol.clone(),
             self.price,
             self.order_direction.clone(),

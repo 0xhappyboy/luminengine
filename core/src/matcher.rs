@@ -21,8 +21,6 @@ impl Matcher {
         bids: Arc<RwLock<OrderTree>>,
         asks: Arc<RwLock<OrderTree>>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-        Box::pin(async move { loop {
-            // match order
-        } })
+        Box::pin(async move { loop {} })
     }
 }
