@@ -162,7 +162,6 @@ pub struct OrderBook {
     pub symbol: String,
     pub bids: Arc<RwLock<OrderTree>>,
     pub asks: Arc<RwLock<OrderTree>>,
-    // whether it is being processed by the matcher engine.
     pub matching: Arc<Mutex<bool>>,
 }
 
@@ -187,32 +186,23 @@ impl OrderBook {
             matching: Arc::new(Mutex::new(false)),
         }
     }
-    /// local push order
-    // pub fn local_push_order(&self, order: Order) {
-    //     let (mut a, mut b) = Self::get_order_copy(&self);
-    //     tokio::spawn(async move {
-    //         loop {
-    //             thread::sleep(Duration::from_millis(2000));
-    //             Self::push_order(
-    //                 &mut a,
-    //                 &mut b,
-    //                 Order::new(order.symbol.clone(), 1111.1, OrderDirection::Buy),
-    //             );
-    //         }
-    //     });
-    // }
+    // enble matcher engine
+    pub fn enble_matcher(&self, matcher: Matcher) {
+        let symbol = self.symbol.clone();
+        let bids = Arc::clone(&self.bids);
+        let asks = Arc::clone(&self.asks);
+        tokio::spawn(matcher.match_order(symbol, bids, asks));
+    }
     /// push order specific implementation logic.
-    pub async fn push_order(&mut self, order: Order) {
+    pub fn push_order(&mut self, order: Order) {
         match order.order_direction {
             OrderDirection::Buy => {
                 let mut bids = self.bids.write().unwrap();
                 bids.push(order);
-                drop(bids);
             }
             OrderDirection::Sell => {
                 let mut asks = self.asks.write().unwrap();
                 asks.push(order);
-                drop(asks);
             }
         }
     }

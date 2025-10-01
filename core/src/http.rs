@@ -5,6 +5,7 @@ use std::{
 
 use axum::{
     Json, Router,
+    handler::Handler,
     http::{StatusCode, header},
     response::IntoResponse,
     routing::post,
@@ -13,19 +14,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    matcher::{MatchEngine, Matcher},
+    matcher::Matcher,
     orderbook::{self, Order, OrderBook, OrderDirection, OrderTree},
 };
 
 const HTTP_LISTENER_PORT: &str = "0.0.0.0:8080";
 
 /// order book http service, HTTP service for handling order books
-pub struct OrderBookHttpService {}
-
+pub struct OrderBookHttpService;
 impl OrderBookHttpService {
-    pub async fn enable(
-        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>, // bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>
-    ) {
+    pub async fn enable(orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>) {
         // build our application with a route
         let app = Router::new()
             .route(
@@ -72,6 +70,12 @@ impl OrderBookHttpService {
             let orderbook = vo.to_orderbook();
             let orderbook = Arc::new(RwLock::new(orderbook));
             orderbooks.insert(vo.clone().symbol, orderbook);
+            orderbooks
+                .get(&vo.symbol.clone())
+                .unwrap()
+                .read()
+                .unwrap()
+                .enble_matcher(Matcher::new());
             (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "application/json")],
@@ -97,12 +101,14 @@ impl OrderBookHttpService {
             let order = vo.to_order();
             orderbook.push_order(order);
             drop(orderbook);
+            drop(orderbooks);
             (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "application/json")],
                 Json(json!({ "message": "create successfully"})),
             )
         } else {
+            drop(orderbooks);
             (
                 StatusCode::EXPECTATION_FAILED,
                 [(header::CONTENT_TYPE, "application/json")],

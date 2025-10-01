@@ -1,3 +1,4 @@
+use core::task;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock},
@@ -9,7 +10,7 @@ use tokio::{join, task::JoinHandle};
 
 use crate::{
     http::OrderBookHttpService,
-    matcher::{self, MatchEngine, Matcher},
+    matcher::Matcher,
     orderbook::{OrderBook, OrderSourceChannel},
 };
 
@@ -27,10 +28,7 @@ impl LuminEngine {
             )),
         }
     }
-    pub async fn startup<T>(&self, matcher: T, orderchannel: Vec<OrderSourceChannel>)
-    where
-        T: Matcher + Clone,
-    {
+    pub async fn startup(&self, matcher: Matcher, orderchannel: Vec<OrderSourceChannel>) {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         orderchannel.iter().for_each(|c| match c {
             OrderSourceChannel::Http => {
@@ -48,17 +46,9 @@ impl LuminEngine {
                 todo!()
             }
         });
-        let orderbooks = Arc::clone(&self.orderbooks);
-        tasks.push(tokio::spawn(async move {
-            loop {
-                let e = orderbooks.read().unwrap();
-            }
-        }));
-        // enble matcher engine
-        let orderbooks = Arc::clone(&self.orderbooks);
-        tasks.push(tokio::spawn(matcher.match_order(orderbooks)));
         // background service
-        tasks.push(tokio::spawn(BGService::enable()));
+        let orderbooks = Arc::clone(&self.orderbooks);
+        tasks.push(tokio::spawn(BGService::enable(orderbooks)));
         for t in tasks {
             join!(t);
         }
@@ -69,7 +59,7 @@ impl LuminEngine {
 /// usually used to control the declaration lifecycle of a program.
 struct BGService {}
 impl BGService {
-    pub async fn enable() {
+    pub async fn enable(orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>) {
         loop {}
     }
 }
