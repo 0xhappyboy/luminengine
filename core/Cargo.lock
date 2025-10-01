@@ -281,6 +281,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
+name = "luminengine"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "num_cpus",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -342,17 +353,6 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
-
-[[package]]
-name = "orderbook"
-version = "0.1.0"
-dependencies = [
- "axum",
- "num_cpus",
- "serde",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "percent-encoding"
