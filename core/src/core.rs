@@ -1,36 +1,42 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
+    thread,
+    time::Duration,
 };
 
 use tokio::{join, task::JoinHandle};
 
 use crate::{
     http::OrderBookHttpService,
-    matcher::Matcher,
+    matcher::{self, MatchEngine, Matcher},
     orderbook::{OrderBook, OrderSourceChannel},
 };
 
+#[derive(Clone)]
 pub struct LuminEngine {
     // key : trade symbol
-    orderbooks: Arc<RwLock<HashMap<String, OrderBook>>>,
+    orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
 }
+
 impl LuminEngine {
     pub fn new() -> Self {
         Self {
-            orderbooks: Arc::new(RwLock::new(HashMap::<String, OrderBook>::default())),
+            orderbooks: Arc::new(RwLock::new(
+                HashMap::<String, Arc<RwLock<OrderBook>>>::default(),
+            )),
         }
     }
-    pub async fn startup<T>(&self, match_engine: T, orderchannel: Vec<OrderSourceChannel>)
+    pub async fn startup<T>(&self, matcher: T, orderchannel: Vec<OrderSourceChannel>)
     where
-        T: Matcher,
+        T: Matcher + Clone,
     {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         orderchannel.iter().for_each(|c| match c {
             OrderSourceChannel::Http => {
-                let en = Arc::clone(&self.orderbooks);
+                let orderbooks = Arc::clone(&self.orderbooks);
                 tasks.push(tokio::spawn(async move {
-                    OrderBookHttpService::enable(en);
+                    OrderBookHttpService::enable(orderbooks).await;
                 }));
             }
             OrderSourceChannel::Tcp => {
@@ -42,8 +48,28 @@ impl LuminEngine {
                 todo!()
             }
         });
+        let orderbooks = Arc::clone(&self.orderbooks);
+        tasks.push(tokio::spawn(async move {
+            loop {
+                let e = orderbooks.read().unwrap();
+            }
+        }));
+        // enble matcher engine
+        let orderbooks = Arc::clone(&self.orderbooks);
+        tasks.push(tokio::spawn(matcher.match_order(orderbooks)));
+        // background service
+        tasks.push(tokio::spawn(BGService::enable()));
         for t in tasks {
             join!(t);
         }
+    }
+}
+
+/// lumin engine background service, the service will continue to run until the process ends.
+/// usually used to control the declaration lifecycle of a program.
+struct BGService {}
+impl BGService {
+    pub async fn enable() {
+        loop {}
     }
 }

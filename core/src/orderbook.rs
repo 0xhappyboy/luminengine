@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     thread::{self},
     time::Duration,
 };
@@ -23,16 +23,6 @@ pub enum OrderSourceChannel {
     Http,
     Tcp,
     Rcp,
-}
-
-/// order book background service, the service will continue to run until the process ends.
-struct BGService {}
-impl BGService {
-    pub async fn enable(bids: Arc<RwLock<OrderTree>>, asks: Arc<RwLock<OrderTree>>) {
-        loop {
-            thread::sleep(Duration::from_millis(5000));
-        }
-    }
 }
 
 // order book trade target abstract
@@ -160,6 +150,9 @@ impl OrderTree {
             0
         }
     }
+    pub fn get_price_num(&self) -> u64 {
+        self.tree.len().try_into().unwrap()
+    }
     pub fn cancel(&mut self, order: Order) {}
 }
 
@@ -169,6 +162,8 @@ pub struct OrderBook {
     pub symbol: String,
     pub bids: Arc<RwLock<OrderTree>>,
     pub asks: Arc<RwLock<OrderTree>>,
+    // whether it is being processed by the matcher engine.
+    pub matching: Arc<Mutex<bool>>,
 }
 
 impl OrderBook {
@@ -189,55 +184,33 @@ impl OrderBook {
                 None,
                 None,
             ))),
-        }
-    }
-    /// start up order book
-    pub async fn startup<T>(&self, match_engine: T)
-    where
-        T: Matcher,
-    {
-        let mut tasks: Vec<JoinHandle<()>> = Vec::new();
-        // add order match engine
-        let (bids, asks) = self.get_order_copy();
-        let match_engine = match_engine.match_order(bids, asks);
-        tasks.push(tokio::spawn(match_engine));
-        // add order book backend service
-        let (buy_order, sell_order) = self.get_order_copy();
-        tasks.push(tokio::spawn(async move {
-            BGService::enable(buy_order, sell_order).await;
-        }));
-        for t in tasks {
-            let _ = join!(t);
+            matching: Arc::new(Mutex::new(false)),
         }
     }
     /// local push order
-    pub fn local_push_order(&self, order: Order) {
-        let (mut a, mut b) = Self::get_order_copy(&self);
-        tokio::spawn(async move {
-            loop {
-                thread::sleep(Duration::from_millis(2000));
-                Self::push_order(
-                    &mut a,
-                    &mut b,
-                    Order::new(order.symbol.clone(), 1111.1, OrderDirection::Buy),
-                );
-            }
-        });
-    }
+    // pub fn local_push_order(&self, order: Order) {
+    //     let (mut a, mut b) = Self::get_order_copy(&self);
+    //     tokio::spawn(async move {
+    //         loop {
+    //             thread::sleep(Duration::from_millis(2000));
+    //             Self::push_order(
+    //                 &mut a,
+    //                 &mut b,
+    //                 Order::new(order.symbol.clone(), 1111.1, OrderDirection::Buy),
+    //             );
+    //         }
+    //     });
+    // }
     /// push order specific implementation logic.
-    fn push_order(
-        bids: &mut Arc<RwLock<OrderTree>>,
-        asks: &mut Arc<RwLock<OrderTree>>,
-        order: Order,
-    ) {
+    pub async fn push_order(&mut self, order: Order) {
         match order.order_direction {
             OrderDirection::Buy => {
-                let mut bids = bids.write().unwrap();
+                let mut bids = self.bids.write().unwrap();
                 bids.push(order);
                 drop(bids);
             }
             OrderDirection::Sell => {
-                let mut asks = asks.write().unwrap();
+                let mut asks = self.asks.write().unwrap();
                 asks.push(order);
                 drop(asks);
             }

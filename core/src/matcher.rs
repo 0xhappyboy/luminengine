@@ -1,17 +1,18 @@
+/// transaction matching engine
 use std::{
+    collections::HashMap,
     pin::Pin,
     sync::{Arc, Mutex, RwLock},
-    thread,
+    thread::{self, spawn},
     time::Duration,
 };
 
-use crate::orderbook::OrderTree;
+use crate::orderbook::{self, OrderBook, OrderTree};
 
 pub trait Matcher {
     fn match_order(
         &self,
-        buy_orders: Arc<RwLock<OrderTree>>,
-        sell_orders: Arc<RwLock<OrderTree>>,
+        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 }
 
@@ -28,20 +29,18 @@ impl MatchEngine {
 impl Matcher for MatchEngine {
     fn match_order(
         &self,
-        bids: Arc<RwLock<OrderTree>>,
-        asks: Arc<RwLock<OrderTree>>,
+        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
             loop {
-                let bids = bids.read().unwrap();
-                let asks = asks.read().unwrap();
-                // Operations on the order tree.
-                println!(
-                    "order num by price :{:?} {:?}",
-                    bids.get_order_num_by_price(11.1),
-                    asks.get_order_num_by_price(11.1)
-                );
-                thread::sleep(Duration::from_millis(1500));
+                for orderbook in orderbooks.read().unwrap().values() {
+                    if !*orderbook.read().unwrap().matching.lock().unwrap() {
+                        let bids = &orderbook.read().unwrap().bids;
+                        let asks = &orderbook.read().unwrap().asks;
+                        // Operations on the order tree.
+                        thread::sleep(Duration::from_millis(1500));
+                    }
+                }
             }
         })
     }
