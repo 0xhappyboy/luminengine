@@ -1,13 +1,12 @@
 /// transaction matching engine
 use std::{
-    collections::HashMap,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock},
-    thread::{self, spawn},
+    sync::{Arc, RwLock},
+    thread,
     time::Duration,
 };
 
-use crate::orderbook::{self, OrderBook, OrderTree};
+use crate::orderbook::OrderTree;
 
 #[derive(Debug, Clone)]
 pub struct Matcher;
@@ -21,6 +20,10 @@ impl Matcher {
         bids: Arc<RwLock<OrderTree>>,
         asks: Arc<RwLock<OrderTree>>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
-        Box::pin(async move { loop {} })
+        Box::pin(async move {
+            loop {
+                // match order
+            }
+        })
     }
 }

@@ -1,0 +1,25 @@
+syntax = "proto3";
+package orderbook;
+
+service OrderBookService {
+    rpc CreateOrderBook (OrderBook) returns (OrderResponse);
+    rpc buy (Order) returns (OrderResponse);
+    rpc sell (Order) returns (OrderResponse);
+    rpc cancel (Order) returns (OrderResponse);
+}
+
+message OrderResponse {
+    int32 id = 1;
+    string description = 2;
+}
+
+message OrderBook {
+    string symbol = 1;
+}
+
+message Order {
+    string symbol = 1;
+    float price = 2;
+    string order_direction = 3;
+    string ex = 4;
+}

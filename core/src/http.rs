@@ -6,7 +6,6 @@ use std::{
 use axum::{
     Json, Router,
     extract::Query,
-    handler::Handler,
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
@@ -16,7 +15,7 @@ use serde_json::json;
 
 use crate::{
     matcher::Matcher,
-    orderbook::{self, Order, OrderBook, OrderDirection, OrderTree},
+    orderbook::{Order, OrderBook, OrderDirection},
 };
 
 const HTTP_LISTENER_PORT: &str = "0.0.0.0:8080";
@@ -57,7 +56,7 @@ impl OrderBookHttpService {
             )
             .route(
                 "/getOrderNumByPrice",
-                get({ move |path| Self::get_order_num_by_price(path, orderbooks) }),
+                get(move |path| Self::get_order_num_by_price(path, orderbooks)),
             );
         // run our app with hyper, listening globally on port 3000
         let listener = tokio::net::TcpListener::bind(HTTP_LISTENER_PORT)
@@ -70,7 +69,7 @@ impl OrderBookHttpService {
         Query(vo): Query<OrderVO>,
         orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
     ) -> impl IntoResponse {
-        let mut orderbooks = orderbooks.read().unwrap();
+        let orderbooks = orderbooks.read().unwrap();
         let mut num = 0;
         if orderbooks.contains_key(&vo.clone().symbol) {
             let orderbook = orderbooks.get(&vo.clone().symbol).unwrap();

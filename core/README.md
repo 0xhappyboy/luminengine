@@ -1,2 +1,2 @@
 # orderbook
-a high-performance order book
+A high-performance financial quantitative trading order book matching framework.

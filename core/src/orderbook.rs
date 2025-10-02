@@ -1,15 +1,12 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
-    thread::{self},
-    time::Duration,
+    sync::{Arc, RwLock},
 };
 
 use crate::{matcher::Matcher, types::PushOrderEvent};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tokio::{join, task::JoinHandle};
 
 /// order direction enumeration
 #[derive(Deserialize, Serialize, Debug, Clone)]

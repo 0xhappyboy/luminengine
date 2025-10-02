@@ -3,7 +3,7 @@ name = "luminengine"
 version = "0.1.0"
 edition = "2024"
 authors = ["happyboy <superhappyboy1995@gmail.com>"]
-description = "Financial quantitative trading order book matching framework."
+description = "A high-performance financial quantitative trading order book matching framework."
 keywords = ["finance", "trade", "quantify", "orderbook"]
 license = "GPL-3.0"
 readme = "README.md"
@@ -16,3 +16,5 @@ num_cpus = "1.17.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.4.0", features = ["rt", "rt-multi-thread", "macros"] }
+tonic = "0.12.2"
+prost = "0.13.2"

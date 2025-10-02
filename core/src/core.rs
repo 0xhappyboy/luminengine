@@ -1,16 +1,12 @@
-use core::task;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
-    thread,
-    time::Duration,
+    sync::{Arc, RwLock},
 };
 
 use tokio::{join, task::JoinHandle};
 
 use crate::{
     http::OrderBookHttpService,
-    matcher::Matcher,
     orderbook::{OrderBook, OrderSourceChannel},
 };
 
@@ -28,7 +24,7 @@ impl LuminEngine {
             )),
         }
     }
-    pub async fn startup(&self, matcher: Matcher, orderchannel: Vec<OrderSourceChannel>) {
+    pub async fn startup(&self, orderchannel: Vec<OrderSourceChannel>) {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         orderchannel.iter().for_each(|c| match c {
             OrderSourceChannel::Http => {
