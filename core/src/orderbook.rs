@@ -6,13 +6,33 @@ use std::{
 use crate::{matcher::Matcher, types::PushOrderEvent};
 
 use chrono::Utc;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+
+lazy_static! {
+    static ref ORDER_BOOKS: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>> = Arc::new(
+        RwLock::new(HashMap::<String, Arc<RwLock<OrderBook>>>::default())
+    );
+}
 
 /// order direction enumeration
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum OrderDirection {
     Buy,
     Sell,
+    None,
+}
+
+impl OrderDirection {
+    pub fn from_string(s: String) -> OrderDirection {
+        if s == "Buy".to_string() {
+            OrderDirection::Buy
+        } else if s == "Sell".to_string() {
+            OrderDirection::Sell
+        } else {
+            OrderDirection::None
+        }
+    }
 }
 
 /// order source channel enumeration
@@ -23,147 +43,49 @@ pub enum OrderSourceChannel {
     Rcp,
 }
 
-// order book trade target abstract
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Target {
-    price: f64,
-}
+/// Orderbook collection type.
+#[derive(Debug, Clone, Default)]
+pub struct OrderBooks;
 
-impl Target {
-    pub fn new(price: f64) -> Self {
-        Self { price: price }
+impl OrderBooks {
+    pub fn contains_symbol(symbol: String) -> bool {
+        // self.orderbooks.contains_key(&symbol)
+        ORDER_BOOKS
+            .write()
+            .unwrap()
+            .contains_key(&symbol.to_string())
     }
-}
-
-/// for each order abstract
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Order {
-    pub id: String,
-    pub symbol: String,
-    pub price: f64,
-    pub order_direction: OrderDirection,
-    pub crt_time: String,
-    pub ex: Option<String>,
-}
-
-impl Order {
-    pub fn new(id: String, symbol: String, price: f64, order_direction: OrderDirection) -> Self {
-        Self {
-            id: id,
-            symbol: symbol,
-            price: price,
-            order_direction: order_direction,
-            crt_time: Utc::now().to_string(),
-            ex: None,
-        }
-    }
-}
-
-/// order tree
-#[derive(Debug, Clone)]
-pub struct OrderTree {
-    pub symbol: String,
-    tree: HashMap<String, Vec<Order>>,
-    // push buy order before event
-    pub push_buy_order_before_event: Option<PushOrderEvent>,
-    // push buy order after event
-    pub push_buy_order_after_event: Option<PushOrderEvent>,
-    // push sell order before event
-    pub push_sell_order_before_event: Option<PushOrderEvent>,
-    // push sell order after event
-    pub push_sell_order_after_event: Option<PushOrderEvent>,
-}
-
-impl OrderTree {
-    pub fn new(
-        symbol: String,
-        push_buy_order_before_event: Option<PushOrderEvent>,
-        push_buy_order_after_event: Option<PushOrderEvent>,
-        push_sell_order_before_event: Option<PushOrderEvent>,
-        push_sell_order_after_event: Option<PushOrderEvent>,
-    ) -> Self {
-        Self {
-            symbol: symbol,
-            tree: HashMap::<String, Vec<Order>>::default(),
-            push_buy_order_before_event: push_buy_order_before_event,
-            push_buy_order_after_event: push_buy_order_after_event,
-            push_sell_order_before_event: push_sell_order_before_event,
-            push_sell_order_after_event: push_sell_order_after_event,
-        }
-    }
-    // Determine whether the specified price exists in the order tree
-    pub fn contains_price(&self, price: f64) -> bool {
-        self.tree.contains_key(&price.to_string())
-    }
-    // Is the order tree empty?
-    pub fn is_empty(&self) -> bool {
-        self.tree.is_empty()
-    }
-    // Push orders to the order tree
-    pub fn push(&mut self, order: Order) {
-        // before successfully placing the order
-        match order.order_direction {
-            OrderDirection::Buy => {
-                // buy order
-                if self.push_buy_order_before_event.is_some() {
-                    self.push_buy_order_before_event.unwrap()(order.clone());
-                }
-            }
-            OrderDirection::Sell => {
-                // sell order
-                if self.push_sell_order_before_event.is_some() {
-                    self.push_sell_order_before_event.unwrap()(order.clone());
-                }
-            }
-        }
-        if self.contains_price(order.clone().price) {
-            self.tree
-                .get_mut(&order.clone().price.to_string())
-                .unwrap()
-                .push(order.clone());
+    pub fn get_orderbook_by_symbol(symbol: String) -> Option<Arc<RwLock<OrderBook>>> {
+        if OrderBooks::contains_symbol(symbol.clone()) {
+            Some(Arc::clone(
+                &ORDER_BOOKS.read().unwrap().get(&symbol).unwrap(),
+            ))
         } else {
-            self.tree
-                .insert(order.clone().price.to_string(), vec![order.clone()]);
-        }
-        // after successfully placing the order
-        match order.order_direction {
-            OrderDirection::Buy => {
-                if self.push_buy_order_after_event.is_some() {
-                    self.push_buy_order_after_event.unwrap()(order);
-                }
-            }
-            OrderDirection::Sell => {
-                if self.push_sell_order_after_event.is_some() {
-                    self.push_sell_order_after_event.unwrap()(order);
-                }
-            }
+            None
         }
     }
-    /// specified price order quantity
-    pub fn get_order_num_by_price(&self, price: f64) -> u64 {
-        if self.tree.contains_key(&price.to_string()) {
-            self.tree
-                .get(&price.to_string())
+    pub fn order_num() -> u64 {
+        ORDER_BOOKS.write().unwrap().len().try_into().unwrap()
+    }
+    pub fn insert(symbol: String, orderbook: Arc<RwLock<OrderBook>>) -> Result<String, String> {
+        if !OrderBooks::contains_symbol(symbol.clone()) {
+            ORDER_BOOKS
+                .write()
                 .unwrap()
-                .len()
-                .try_into()
+                .insert(symbol.clone(), orderbook);
+            ORDER_BOOKS
+                .read()
                 .unwrap()
+                .get(&symbol.clone())
+                .unwrap()
+                .read()
+                .unwrap()
+                .enble_matcher(Matcher::new());
+            Ok("new order book added successfully".to_string())
         } else {
-            0
+            Err("symbol already exists".to_string())
         }
     }
-    /// get order list by price
-    pub fn get_order_vec_by_price(&self, price: f64) -> Vec<Order> {
-        if self.tree.contains_key(&price.to_string()) {
-            self.tree.get(&price.to_string()).unwrap().to_vec()
-        } else {
-            vec![]
-        }
-    }
-    pub fn get_price_num(&self) -> u64 {
-        self.tree.len().try_into().unwrap()
-    }
-    pub fn cancel(&mut self, order: Order) {}
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +136,7 @@ impl OrderBook {
                 let mut asks = self.asks.write().unwrap();
                 asks.push(order);
             }
+            OrderDirection::None => (),
         }
     }
     /// matching order
@@ -278,5 +201,163 @@ impl OrderBook {
         let mut asks = self.asks.write().unwrap();
         asks.push_sell_order_after_event = push_sell_order_after_event;
         self.clone()
+    }
+}
+
+/// order tree
+#[derive(Debug, Clone)]
+pub struct OrderTree {
+    pub symbol: String,
+    tree: HashMap<String, Vec<Order>>,
+    // push buy order before event
+    pub push_buy_order_before_event: Option<PushOrderEvent>,
+    // push buy order after event
+    pub push_buy_order_after_event: Option<PushOrderEvent>,
+    // push sell order before event
+    pub push_sell_order_before_event: Option<PushOrderEvent>,
+    // push sell order after event
+    pub push_sell_order_after_event: Option<PushOrderEvent>,
+}
+
+impl OrderTree {
+    pub fn new(
+        symbol: String,
+        push_buy_order_before_event: Option<PushOrderEvent>,
+        push_buy_order_after_event: Option<PushOrderEvent>,
+        push_sell_order_before_event: Option<PushOrderEvent>,
+        push_sell_order_after_event: Option<PushOrderEvent>,
+    ) -> Self {
+        Self {
+            symbol: symbol,
+            tree: HashMap::<String, Vec<Order>>::default(),
+            push_buy_order_before_event: push_buy_order_before_event,
+            push_buy_order_after_event: push_buy_order_after_event,
+            push_sell_order_before_event: push_sell_order_before_event,
+            push_sell_order_after_event: push_sell_order_after_event,
+        }
+    }
+    // Determine whether the specified price exists in the order tree
+    pub fn contains_price(&self, price: f64) -> bool {
+        self.tree.contains_key(&price.to_string())
+    }
+    // Is the order tree empty?
+    pub fn is_empty(&self) -> bool {
+        self.tree.is_empty()
+    }
+    // Push orders to the order tree
+    pub fn push(&mut self, order: Order) {
+        // before successfully placing the order
+        match order.order_direction {
+            OrderDirection::Buy => {
+                // buy order
+                if self.push_buy_order_before_event.is_some() {
+                    self.push_buy_order_before_event.unwrap()(order.clone());
+                }
+            }
+            OrderDirection::Sell => {
+                // sell order
+                if self.push_sell_order_before_event.is_some() {
+                    self.push_sell_order_before_event.unwrap()(order.clone());
+                }
+            }
+            OrderDirection::None => (),
+        }
+        if self.contains_price(order.clone().price) {
+            self.tree
+                .get_mut(&order.clone().price.to_string())
+                .unwrap()
+                .push(order.clone());
+        } else {
+            self.tree
+                .insert(order.clone().price.to_string(), vec![order.clone()]);
+        }
+        // after successfully placing the order
+        match order.order_direction {
+            OrderDirection::Buy => {
+                if self.push_buy_order_after_event.is_some() {
+                    self.push_buy_order_after_event.unwrap()(order);
+                }
+            }
+            OrderDirection::Sell => {
+                if self.push_sell_order_after_event.is_some() {
+                    self.push_sell_order_after_event.unwrap()(order);
+                }
+            }
+            OrderDirection::None => (),
+        }
+    }
+    /// specified price order quantity
+    pub fn get_order_num_by_price(&self, price: f64) -> u64 {
+        if self.tree.contains_key(&price.to_string()) {
+            self.tree
+                .get(&price.to_string())
+                .unwrap()
+                .len()
+                .try_into()
+                .unwrap()
+        } else {
+            0
+        }
+    }
+    /// get order list by price
+    pub fn get_order_vec_by_price(&self, price: f64) -> Vec<Order> {
+        if self.tree.contains_key(&price.to_string()) {
+            self.tree.get(&price.to_string()).unwrap().to_vec()
+        } else {
+            vec![]
+        }
+    }
+    pub fn get_price_num(&self) -> u64 {
+        self.tree.len().try_into().unwrap()
+    }
+    pub fn cancel(&mut self, order: Order) {}
+}
+
+/// for each order abstract
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Order {
+    pub id: String,
+    pub symbol: String,
+    pub price: f64,
+    pub order_direction: OrderDirection,
+    pub crt_time: String,
+    pub ex: Option<String>,
+}
+
+impl Order {
+    pub fn new(id: String, symbol: String, price: f64, order_direction: OrderDirection) -> Self {
+        Self {
+            id: id,
+            symbol: symbol,
+            price: price,
+            order_direction: order_direction,
+            crt_time: Utc::now().to_string(),
+            ex: None,
+        }
+    }
+    pub fn from_rpc_order(
+        order: crate::rpc::server::orderbook::Order,
+        order_direction: OrderDirection,
+    ) -> Self {
+        Self {
+            id: 1.to_string(),
+            symbol: order.symbol,
+            price: order.price.into(),
+            order_direction: order_direction,
+            crt_time: Utc::now().to_string(),
+            ex: None,
+        }
+    }
+}
+
+// order book trade target abstract
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Target {
+    price: f64,
+}
+
+impl Target {
+    pub fn new(price: f64) -> Self {
+        Self { price: price }
     }
 }

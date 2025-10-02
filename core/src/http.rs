@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    panic::AssertUnwindSafe,
     sync::{Arc, RwLock},
 };
 
@@ -15,6 +16,7 @@ use serde_json::json;
 
 use crate::{
     matcher::Matcher,
+    orderbook::OrderBooks,
     orderbook::{Order, OrderBook, OrderDirection},
 };
 
@@ -23,40 +25,19 @@ const HTTP_LISTENER_PORT: &str = "0.0.0.0:8080";
 /// order book http service, HTTP service for handling order books
 pub struct OrderBookHttpService;
 impl OrderBookHttpService {
-    pub async fn enable(orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>) {
+    pub async fn enable() {
         // build our application with a route
         let app = Router::new()
             .route(
                 "/orderbook/create",
-                post({
-                    let orderbooks = Arc::clone(&orderbooks);
-                    move |body| Self::create_order_book(body, orderbooks)
-                }),
+                post({ move |body| Self::create_order_book(body) }),
             )
-            .route(
-                "/buy",
-                post({
-                    let orderbooks = Arc::clone(&orderbooks);
-                    move |body| Self::push_order(body, orderbooks)
-                }),
-            )
-            .route(
-                "/sell",
-                post({
-                    let orderbooks = Arc::clone(&orderbooks);
-                    move |body| Self::push_order(body, orderbooks)
-                }),
-            )
-            .route(
-                "/cancel",
-                post({
-                    let orderbooks = Arc::clone(&orderbooks);
-                    move |body| Self::cancel(body, orderbooks)
-                }),
-            )
+            .route("/buy", post({ move |body| Self::push_order(body) }))
+            .route("/sell", post({ move |body| Self::push_order(body) }))
+            .route("/cancel", post({ move |body| Self::cancel(body) }))
             .route(
                 "/getOrderNumByPrice",
-                get(move |path| Self::get_order_num_by_price(path, orderbooks)),
+                get(move |path| Self::get_order_num_by_price(path)),
             );
         // run our app with hyper, listening globally on port 3000
         let listener = tokio::net::TcpListener::bind(HTTP_LISTENER_PORT)
@@ -65,17 +46,14 @@ impl OrderBookHttpService {
         axum::serve(listener, app).await.unwrap();
     }
     // web api, get order num by price.
-    async fn get_order_num_by_price(
-        Query(vo): Query<OrderVO>,
-        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
-    ) -> impl IntoResponse {
-        let orderbooks = orderbooks.read().unwrap();
+    async fn get_order_num_by_price(Query(vo): Query<OrderVO>) -> impl IntoResponse {
         let mut num = 0;
-        if orderbooks.contains_key(&vo.clone().symbol) {
-            let orderbook = orderbooks.get(&vo.clone().symbol).unwrap();
+        if OrderBooks::contains_symbol(vo.clone().symbol) {
+            let orderbook = OrderBooks::get_orderbook_by_symbol(vo.clone().symbol);
             match vo.order_direction {
                 OrderDirection::Buy => {
                     num = orderbook
+                        .unwrap()
                         .read()
                         .unwrap()
                         .bids
@@ -85,6 +63,7 @@ impl OrderBookHttpService {
                 }
                 OrderDirection::Sell => {
                     num = orderbook
+                        .unwrap()
                         .read()
                         .unwrap()
                         .asks
@@ -92,6 +71,7 @@ impl OrderBookHttpService {
                         .unwrap()
                         .get_order_num_by_price(vo.price);
                 }
+                OrderDirection::None => (),
             }
         }
         (
@@ -101,54 +81,35 @@ impl OrderBookHttpService {
         )
     }
     /// create order book
-    async fn create_order_book(
-        Json(vo): Json<CreateOrderBookVO>,
-        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
-    ) -> impl IntoResponse {
-        let mut orderbooks = orderbooks.write().unwrap();
-        if !orderbooks.contains_key(&vo.clone().symbol) {
-            let orderbook = vo.to_orderbook();
-            let orderbook = Arc::new(RwLock::new(orderbook));
-            orderbooks.insert(vo.clone().symbol, orderbook);
-            orderbooks
-                .get(&vo.symbol.clone())
-                .unwrap()
-                .read()
-                .unwrap()
-                .enble_matcher(Matcher::new());
-            (
+    async fn create_order_book(Json(vo): Json<CreateOrderBookVO>) -> impl IntoResponse {
+        let orderbook = vo.to_orderbook();
+        let orderbook = Arc::new(RwLock::new(orderbook));
+        match OrderBooks::insert(vo.clone().symbol, orderbook) {
+            Ok(s) => (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "application/json")],
-                Json(json!({ "message": "create successfully"})),
-            )
-        } else {
-            (
+                Json(json!({ "message": s.to_string()})),
+            ),
+            Err(e) => (
                 StatusCode::EXPECTATION_FAILED,
                 [(header::CONTENT_TYPE, "application/json")],
-                Json(json!({ "message": "symbol already exists"})),
-            )
+                Json(json!({ "message": e.to_string()})),
+            ),
         }
     }
     /// http buy interface processing
-    async fn push_order(
-        Json(vo): Json<OrderVO>,
-        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
-    ) -> impl IntoResponse {
-        let mut orderbooks = orderbooks.write().unwrap();
-        if orderbooks.contains_key(&vo.clone().symbol) {
-            let orderbook = orderbooks.get_mut(&vo.clone().symbol).unwrap();
-            let mut orderbook = orderbook.write().unwrap();
+    async fn push_order(Json(vo): Json<OrderVO>) -> impl IntoResponse {
+        if OrderBooks::contains_symbol(vo.clone().symbol) {
+            let mut orderbook = OrderBooks::get_orderbook_by_symbol(vo.clone().symbol);
+            let mut orderbook = orderbook.as_mut().unwrap().write().unwrap();
             let order = vo.to_order();
             orderbook.push_order(order);
-            drop(orderbook);
-            drop(orderbooks);
             (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "application/json")],
                 Json(json!({ "message": "create successfully"})),
             )
         } else {
-            drop(orderbooks);
             (
                 StatusCode::EXPECTATION_FAILED,
                 [(header::CONTENT_TYPE, "application/json")],
@@ -157,10 +118,7 @@ impl OrderBookHttpService {
         }
     }
     /// http cancel order interface processing
-    async fn cancel(
-        Json(vo): Json<OrderVO>,
-        orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
-    ) -> impl IntoResponse {
+    async fn cancel(Json(vo): Json<OrderVO>) -> impl IntoResponse {
         format!("push order cancel order").to_string()
     }
 }

@@ -8,7 +8,5 @@ use luminengine::{
 
 #[tokio::main]
 async fn main() {
-    LuminEngine::new()
-        .startup(vec![OrderSourceChannel::Http])
-        .await;
+    LuminEngine::startup(vec![OrderSourceChannel::Http, OrderSourceChannel::Rcp]).await;
 }

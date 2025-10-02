@@ -4,7 +4,7 @@ pub struct OrderResponse {
     #[prost(int32, tag = "1")]
     pub id: i32,
     #[prost(string, tag = "2")]
-    pub description: ::prost::alloc::string::String,
+    pub message: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OrderBook {

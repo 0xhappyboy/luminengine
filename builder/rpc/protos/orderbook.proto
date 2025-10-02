@@ -10,7 +10,7 @@ service OrderBookService {
 
 message OrderResponse {
     int32 id = 1;
-    string description = 2;
+    string message = 2;
 }
 
 message OrderBook {

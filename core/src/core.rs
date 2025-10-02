@@ -1,36 +1,22 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use tokio::{join, task::JoinHandle};
 
 use crate::{
     http::OrderBookHttpService,
-    orderbook::{OrderBook, OrderSourceChannel},
+    orderbook::{OrderBooks, OrderSourceChannel},
+    rpc::server::OrderBookRPCService,
 };
 
 #[derive(Clone)]
-pub struct LuminEngine {
-    // key : trade symbol
-    orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>,
-}
-
+pub struct LuminEngine;
 impl LuminEngine {
-    pub fn new() -> Self {
-        Self {
-            orderbooks: Arc::new(RwLock::new(
-                HashMap::<String, Arc<RwLock<OrderBook>>>::default(),
-            )),
-        }
-    }
-    pub async fn startup(&self, orderchannel: Vec<OrderSourceChannel>) {
+    pub async fn startup(orderchannel: Vec<OrderSourceChannel>) {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         orderchannel.iter().for_each(|c| match c {
             OrderSourceChannel::Http => {
-                let orderbooks = Arc::clone(&self.orderbooks);
                 tasks.push(tokio::spawn(async move {
-                    OrderBookHttpService::enable(orderbooks).await;
+                    OrderBookHttpService::enable().await;
                 }));
             }
             OrderSourceChannel::Tcp => {
@@ -39,12 +25,13 @@ impl LuminEngine {
             }
             OrderSourceChannel::Rcp => {
                 // handle orders placed via the rcp.
-                todo!()
+                tasks.push(tokio::spawn(async move {
+                    OrderBookRPCService::enable().await;
+                }));
             }
         });
         // background service
-        let orderbooks = Arc::clone(&self.orderbooks);
-        tasks.push(tokio::spawn(BGService::enable(orderbooks)));
+        tasks.push(tokio::spawn(BGService::enable()));
         for t in tasks {
             join!(t);
         }
@@ -55,7 +42,7 @@ impl LuminEngine {
 /// usually used to control the declaration lifecycle of a program.
 struct BGService {}
 impl BGService {
-    pub async fn enable(orderbooks: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>>) {
+    pub async fn enable() {
         loop {}
     }
 }
