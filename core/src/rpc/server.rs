@@ -1,14 +1,12 @@
 use std::sync::{Arc, RwLock};
 
-use crate::matcher::Matcher;
+use crate::config::RPC_LISTENER_PORT;
 use crate::orderbook::{OrderBooks, OrderDirection};
 /// order book RPC service, RPC service for handling order books
 use orderbook::order_book_service_server::{OrderBookService, OrderBookServiceServer};
 use orderbook::{Order, OrderBook, OrderResponse};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
-
-const RPC_LISTENER_PORT: &str = "0.0.0.0:8081";
 
 pub mod orderbook {
     include!("protos/orderbook.rs");
@@ -19,7 +17,7 @@ pub struct OrderBookRPCService;
 
 impl OrderBookRPCService {
     pub async fn enable() {
-        let addr = RPC_LISTENER_PORT.parse().unwrap();
+        let addr = RPC_LISTENER_PORT.lock().unwrap().parse().unwrap();
         let order_service = OrderBookServiceServer::new(OrderBookRPCService::default());
         Server::builder()
             .add_service(order_service)

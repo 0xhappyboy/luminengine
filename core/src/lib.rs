@@ -6,3 +6,4 @@ pub mod rpc;
 pub mod sys;
 pub mod tcp;
 pub mod types;
+pub mod config;

@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use tokio::{join, task::JoinHandle};
 
 use crate::{
+    config::{HTTP_LISTENER_PORT, RPC_LISTENER_PORT},
     http::OrderBookHttpService,
     orderbook::{OrderBooks, OrderSourceChannel},
     rpc::server::OrderBookRPCService,
@@ -11,6 +12,14 @@ use crate::{
 #[derive(Clone)]
 pub struct LuminEngine;
 impl LuminEngine {
+    pub fn rpc_listener(address: String) -> Self {
+        *RPC_LISTENER_PORT.lock().unwrap() = address;
+        Self
+    }
+    pub fn http_listener(address: String) -> Self {
+        *HTTP_LISTENER_PORT.lock().unwrap() = address;
+        Self
+    }
     pub async fn startup(orderchannel: Vec<OrderSourceChannel>) {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         orderchannel.iter().for_each(|c| match c {

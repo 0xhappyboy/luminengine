@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    panic::AssertUnwindSafe,
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use axum::{
     Json, Router,
@@ -15,12 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    matcher::Matcher,
-    orderbook::OrderBooks,
-    orderbook::{Order, OrderBook, OrderDirection},
+    config::HTTP_LISTENER_PORT,
+    orderbook::{Order, OrderBook, OrderBooks, OrderDirection},
 };
-
-const HTTP_LISTENER_PORT: &str = "0.0.0.0:8080";
 
 /// order book http service, HTTP service for handling order books
 pub struct OrderBookHttpService;
@@ -39,10 +32,8 @@ impl OrderBookHttpService {
                 "/getOrderNumByPrice",
                 get(move |path| Self::get_order_num_by_price(path)),
             );
-        // run our app with hyper, listening globally on port 3000
-        let listener = tokio::net::TcpListener::bind(HTTP_LISTENER_PORT)
-            .await
-            .unwrap();
+        let addr = HTTP_LISTENER_PORT.lock().unwrap().clone();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();
     }
     // web api, get order num by price.
