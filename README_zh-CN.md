@@ -11,5 +11,5 @@
 <a href="./README_zh-CN.md">简体中文</a> | <a href="./README.md">English</a>
 </p>
 
-## Resource
+## 资源
 * <a href="https://github.com/0xhappyboy/luminengine/tree/main/builder/rpc/protos">RPC Proto 文件</a>
