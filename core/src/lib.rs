@@ -1,9 +1,10 @@
+pub mod config;
 pub mod core;
 pub mod http;
 pub mod matcher;
+pub mod monitor;
 pub mod orderbook;
 pub mod rpc;
 pub mod sys;
 pub mod tcp;
 pub mod types;
-pub mod config;
