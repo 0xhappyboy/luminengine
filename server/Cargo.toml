@@ -1,0 +1,12 @@
+[package]
+name = "luminengine-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["happyboy <superhappyboy1995@gmail.com>"]
+description = "A command line program developed based on LuminEngine core to start the LuminEngine OrderBook service."
+keywords = ["trade", "crypto", "finance", "orderbooks", "luminengine"]
+license = "GPL-3.0"
+readme = "README.md"
+repository = "https://github.com/0xhappyboy/luminengine/tree/main/server"
+
+[dependencies]
