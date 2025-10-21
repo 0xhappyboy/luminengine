@@ -1,12 +1,12 @@
 pub mod config;
 pub mod core;
 pub mod http;
-pub mod matcher;
+pub mod matchengine;
 pub mod monitor;
 pub mod orderbook;
+pub mod price;
 pub mod rpc;
 pub mod sys;
+pub mod target;
 pub mod tcp;
 pub mod types;
-pub mod price;
-pub mod target;

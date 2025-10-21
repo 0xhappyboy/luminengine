@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use luminengine::{
     core::LuminEngine,
-    matcher::Matcher,
     orderbook::{OrderBook, OrderSourceChannel},
 };
 

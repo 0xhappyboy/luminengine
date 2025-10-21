@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use axum::{
     Json, Router,
@@ -7,12 +10,13 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     config::HTTP_LISTENER_PORT,
-    orderbook::{Order, OrderBook, OrderBooks, OrderDirection},
+    orderbook::{Order, OrderBook, OrderBooks, OrderDirection, OrderStatus},
     target::Target,
 };
 
@@ -42,34 +46,16 @@ impl OrderBookHttpService {
         let mut num = 0;
         if OrderBooks::contains_symbol(vo.clone().symbol) {
             let orderbook = OrderBooks::get_orderbook_by_symbol(vo.clone().symbol);
-            match vo.order_direction {
-                OrderDirection::Buy => {
-                    num = orderbook
-                        .unwrap()
-                        .read()
-                        .unwrap()
-                        .bids
-                        .read()
-                        .unwrap()
-                        .get_order_num_by_price(vo.price);
-                }
-                OrderDirection::Sell => {
-                    num = orderbook
-                        .unwrap()
-                        .read()
-                        .unwrap()
-                        .asks
-                        .read()
-                        .unwrap()
-                        .get_order_num_by_price(vo.price);
-                }
+            match vo.direction {
+                OrderDirection::Buy => {}
+                OrderDirection::Sell => {}
                 OrderDirection::None => (),
             }
         }
         (
             StatusCode::EXPECTATION_FAILED,
             [(header::CONTENT_TYPE, "application/json")],
-            Json(json!({ "message": "ok","data":num})),
+            Json(json!({ "message": "ok","data":0})),
         )
     }
     /// create order book
@@ -132,22 +118,33 @@ impl CreateOrderBookVO {
 // order view object
 #[derive(Deserialize, Serialize, Debug, Clone)]
 struct OrderVO {
+    pub id: String,
     pub symbol: String,
     pub price: f64,
+    pub direction: OrderDirection,
     pub quantity: f64,
-    pub order_direction: OrderDirection,
+    pub remaining: f64,
+    pub filled: f64,
+    pub crt_time: String,
+    pub status: OrderStatus,
     pub ex: Option<String>,
 }
 
 impl OrderVO {
     pub fn to_order(&self) -> Order {
-        let order = Order::new(
-            "1".to_string(),
-            self.symbol.clone(),
-            self.price,
-            self.quantity,
-            self.order_direction.clone(),
-        );
+        let order = Order {
+            id: "id".to_string(),
+            symbol: self.symbol.clone(),
+            price: self.price,
+            direction: self.direction.clone(),
+            quantity: self.quantity,
+            remaining: self.remaining,
+            filled: self.filled,
+            crt_time: Utc::now().to_string(),
+            status: self.status.clone(),
+            expiry: Some(Instant::now()),
+            ex: None,
+        };
         order
     }
 }

@@ -11,7 +11,7 @@
 /// - Lower ask prices have higher priority (come first in sorted collections)
 ///
 use std::cmp::Ordering;
-pub trait Price {
+pub trait Price: 'static {
     /// Creates a new price instance from a floating-point value.
     ///
     /// # Arguments
@@ -25,6 +25,7 @@ pub trait Price {
     /// let ask = AskPrice::new(100.75);
     /// ```
     fn new(price: f64) -> Self;
+    fn to_f64(&self) -> f64;
 }
 
 /// Order Bid Price
@@ -41,7 +42,7 @@ pub trait Price {
 ///
 #[derive(Debug, Clone)]
 pub struct BidPrice {
-    price: f64,
+    pub price: f64,
 }
 
 impl Ord for BidPrice {
@@ -70,6 +71,10 @@ impl Price for BidPrice {
     fn new(price: f64) -> Self {
         BidPrice { price: price }
     }
+
+    fn to_f64(&self) -> f64 {
+        self.price
+    }
 }
 
 /// Order Ask price
@@ -86,7 +91,7 @@ impl Price for BidPrice {
 ///
 #[derive(Debug, Clone)]
 pub struct AskPrice {
-    price: f64,
+    pub price: f64,
 }
 
 impl Ord for AskPrice {
@@ -113,5 +118,8 @@ impl Eq for AskPrice {}
 impl Price for AskPrice {
     fn new(price: f64) -> Self {
         AskPrice { price: price }
+    }
+    fn to_f64(&self) -> f64 {
+        self.price
     }
 }
