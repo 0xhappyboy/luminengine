@@ -1,9 +1,14 @@
 use std::{
-    collections::HashMap,
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, RwLock},
 };
 
-use crate::{matcher::Matcher, types::PushOrderEvent};
+use crate::{
+    matcher::Matcher,
+    price::{AskPrice, BidPrice, Price},
+    types::PushOrderEvent,
+};
 
 use chrono::Utc;
 use lazy_static::lazy_static;
@@ -93,8 +98,8 @@ impl OrderBooks {
 pub struct OrderBook {
     pub symbol: String,
     pub target: Arc<RwLock<Target>>,
-    pub bids: Arc<RwLock<OrderTree>>,
-    pub asks: Arc<RwLock<OrderTree>>,
+    pub bids: Arc<RwLock<OrderTree<BidPrice>>>,
+    pub asks: Arc<RwLock<OrderTree<AskPrice>>>,
 }
 
 impl OrderBook {
@@ -163,7 +168,12 @@ impl OrderBook {
     /// order book storage
     pub fn storage() {}
     /// get order copy
-    fn get_order_copy(&self) -> (Arc<RwLock<OrderTree>>, Arc<RwLock<OrderTree>>) {
+    fn get_order_copy(
+        &self,
+    ) -> (
+        Arc<RwLock<OrderTree<BidPrice>>>,
+        Arc<RwLock<OrderTree<AskPrice>>>,
+    ) {
         (Arc::clone(&self.bids), Arc::clone(&self.asks))
     }
     /// update push buy order before event
@@ -206,9 +216,14 @@ impl OrderBook {
 
 /// order tree
 #[derive(Debug, Clone)]
-pub struct OrderTree {
+pub struct OrderTree<P>
+where
+    P: Price + Ord + PartialOrd + PartialEq + Eq,
+{
     pub symbol: String,
-    tree: HashMap<String, Vec<Order>>,
+    // k: price, v: order list
+    // tree: HashMap<String, Vec<Order>>,
+    tree: BTreeMap<P, Vec<Order>>,
     // push buy order before event
     pub push_buy_order_before_event: Option<PushOrderEvent>,
     // push buy order after event
@@ -219,7 +234,10 @@ pub struct OrderTree {
     pub push_sell_order_after_event: Option<PushOrderEvent>,
 }
 
-impl OrderTree {
+impl<P> OrderTree<P>
+where
+    P: Price + Ord + PartialOrd + PartialEq + Eq,
+{
     pub fn new(
         symbol: String,
         push_buy_order_before_event: Option<PushOrderEvent>,
@@ -229,7 +247,7 @@ impl OrderTree {
     ) -> Self {
         Self {
             symbol: symbol,
-            tree: HashMap::<String, Vec<Order>>::default(),
+            tree: BTreeMap::<P, Vec<Order>>::new(),
             push_buy_order_before_event: push_buy_order_before_event,
             push_buy_order_after_event: push_buy_order_after_event,
             push_sell_order_before_event: push_sell_order_before_event,
@@ -238,7 +256,7 @@ impl OrderTree {
     }
     // Determine whether the specified price exists in the order tree
     pub fn contains_price(&self, price: f64) -> bool {
-        self.tree.contains_key(&price.to_string())
+        self.tree.contains_key(&P::new(price))
     }
     // Is the order tree empty?
     pub fn is_empty(&self) -> bool {
@@ -264,12 +282,11 @@ impl OrderTree {
         }
         if self.contains_price(order.clone().price) {
             self.tree
-                .get_mut(&order.clone().price.to_string())
+                .get_mut(&P::new(order.price))
                 .unwrap()
                 .push(order.clone());
         } else {
-            self.tree
-                .insert(order.clone().price.to_string(), vec![order.clone()]);
+            self.tree.insert(P::new(order.price), vec![order.clone()]);
         }
         // after successfully placing the order
         match order.order_direction {
@@ -288,9 +305,9 @@ impl OrderTree {
     }
     /// specified price order quantity
     pub fn get_order_num_by_price(&self, price: f64) -> u64 {
-        if self.tree.contains_key(&price.to_string()) {
+        if self.contains_price(price) {
             self.tree
-                .get(&price.to_string())
+                .get(&P::new(price))
                 .unwrap()
                 .len()
                 .try_into()
@@ -301,8 +318,8 @@ impl OrderTree {
     }
     /// get order list by price
     pub fn get_order_vec_by_price(&self, price: f64) -> Vec<Order> {
-        if self.tree.contains_key(&price.to_string()) {
-            self.tree.get(&price.to_string()).unwrap().to_vec()
+        if self.contains_price(price) {
+            self.tree.get(&P::new(price)).unwrap().to_vec()
         } else {
             vec![]
         }
