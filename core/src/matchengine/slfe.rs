@@ -175,6 +175,20 @@ impl SlfeStats {
     }
 }
 
+/// Order book matching engine (Slfe)
+///
+/// The SLFE struct represents a complete matching engine that maintains separate
+/// order books for bids and asks, processes matching events, and tracks order locations.
+///
+/// # Field
+///
+/// * bids: Sharded order tree for buy orders (BidPrice), providing concurrent access
+/// * asks: Sharded order tree for sell orders (AskPrice), providing concurrent access  
+/// * tx/rx: Channel for broadcasting match events to subscribers
+/// * order_index: Fast concurrent mapping from order IDs to their locations in the books
+/// * stats: Runtime statistics protected by read-write locks
+/// * config: Engine configuration parameters
+///
 #[derive(Debug, Clone)]
 pub struct Slfe {
     pub bids: Arc<ShardedOrderTree<BidPrice>>,
@@ -201,7 +215,6 @@ impl Slfe {
         }
     }
     pub async fn start_engine(self: Arc<Self>) {
-        let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         let mut tasks = Vec::new();
         let event_matcher = self.clone();
         let event_handle = tokio::task::spawn_blocking(move || {
