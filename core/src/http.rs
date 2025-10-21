@@ -13,6 +13,7 @@ use serde_json::json;
 use crate::{
     config::HTTP_LISTENER_PORT,
     orderbook::{Order, OrderBook, OrderBooks, OrderDirection},
+    target::Target,
 };
 
 /// order book http service, HTTP service for handling order books
@@ -119,9 +120,12 @@ impl OrderBookHttpService {
 struct CreateOrderBookVO {
     pub symbol: String,
 }
+
 impl CreateOrderBookVO {
     pub fn to_orderbook(&self) -> OrderBook {
-        OrderBook::new(self.symbol.clone())
+        OrderBook::new(Target {
+            symbol: self.symbol.clone(),
+        })
     }
 }
 

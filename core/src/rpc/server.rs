@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::config::RPC_LISTENER_PORT;
 use crate::orderbook::{OrderBooks, OrderDirection};
+use crate::target::Target;
 /// order book RPC service, RPC service for handling order books
 use orderbook::order_book_service_server::{OrderBookService, OrderBookServiceServer};
 use orderbook::{Order, OrderBook, OrderResponse};
@@ -38,9 +39,9 @@ impl OrderBookService for OrderBookRPCService {
         let response;
         match crate::orderbook::OrderBooks::insert(
             symbol.clone(),
-            Arc::new(RwLock::new(crate::orderbook::OrderBook::new(
-                symbol.clone(),
-            ))),
+            Arc::new(RwLock::new(crate::orderbook::OrderBook::new(Target {
+                symbol: symbol.clone(),
+            }))),
         ) {
             Ok(s) => {
                 response = OrderResponse {

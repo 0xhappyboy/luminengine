@@ -1,23 +1,22 @@
 use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     sync::{Arc, RwLock},
 };
 
 use crate::{
     matcher::Matcher,
     price::{AskPrice, BidPrice, Price},
+    target::Target,
     types::PushOrderEvent,
 };
 
 use chrono::Utc;
+use dashmap::DashMap;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 lazy_static! {
-    static ref ORDER_BOOKS: Arc<RwLock<HashMap<String, Arc<RwLock<OrderBook>>>>> = Arc::new(
-        RwLock::new(HashMap::<String, Arc<RwLock<OrderBook>>>::default())
-    );
+    static ref ORDER_BOOKS: DashMap<Target, Arc<RwLock<OrderBook>>> = DashMap::new();
 }
 
 /// order direction enumeration
@@ -55,33 +54,32 @@ pub struct OrderBooks;
 impl OrderBooks {
     pub fn contains_symbol(symbol: String) -> bool {
         // self.orderbooks.contains_key(&symbol)
-        ORDER_BOOKS
-            .write()
-            .unwrap()
-            .contains_key(&symbol.to_string())
+        ORDER_BOOKS.contains_key(&Target::new(symbol))
     }
     pub fn get_orderbook_by_symbol(symbol: String) -> Option<Arc<RwLock<OrderBook>>> {
         if OrderBooks::contains_symbol(symbol.clone()) {
             Some(Arc::clone(
-                &ORDER_BOOKS.read().unwrap().get(&symbol).unwrap(),
+                &ORDER_BOOKS.get(&Target { symbol: symbol }).unwrap(),
             ))
         } else {
             None
         }
     }
     pub fn order_num() -> u64 {
-        ORDER_BOOKS.write().unwrap().len().try_into().unwrap()
+        ORDER_BOOKS.len().try_into().unwrap()
     }
     pub fn insert(symbol: String, orderbook: Arc<RwLock<OrderBook>>) -> Result<String, String> {
         if !OrderBooks::contains_symbol(symbol.clone()) {
+            ORDER_BOOKS.insert(
+                Target {
+                    symbol: symbol.clone(),
+                },
+                orderbook,
+            );
             ORDER_BOOKS
-                .write()
-                .unwrap()
-                .insert(symbol.clone(), orderbook);
-            ORDER_BOOKS
-                .read()
-                .unwrap()
-                .get(&symbol.clone())
+                .get(&Target {
+                    symbol: symbol.clone(),
+                })
                 .unwrap()
                 .read()
                 .unwrap()
@@ -96,26 +94,24 @@ impl OrderBooks {
 #[derive(Debug, Clone)]
 /// border book
 pub struct OrderBook {
-    pub symbol: String,
     pub target: Arc<RwLock<Target>>,
     pub bids: Arc<RwLock<OrderTree<BidPrice>>>,
     pub asks: Arc<RwLock<OrderTree<AskPrice>>>,
 }
 
 impl OrderBook {
-    pub fn new(symbol: String) -> Self {
+    pub fn new(target: Target) -> Self {
         Self {
-            symbol: symbol.clone(),
-            target: Arc::new(RwLock::new(Target::new(0.0))),
-            bids: Arc::new(RwLock::new(OrderTree::new(
-                symbol.clone(),
+            target: Arc::new(RwLock::new(target.clone())),
+            bids: Arc::new(RwLock::new(OrderTree::<BidPrice>::new(
+                target.symbol.clone(),
                 None,
                 None,
                 None,
                 None,
             ))),
-            asks: Arc::new(RwLock::new(OrderTree::new(
-                symbol.clone(),
+            asks: Arc::new(RwLock::new(OrderTree::<AskPrice>::new(
+                target.symbol.clone(),
                 None,
                 None,
                 None,
@@ -125,7 +121,7 @@ impl OrderBook {
     }
     // enble matcher engine
     pub fn enble_matcher(&self, matcher: Matcher) {
-        let symbol = self.symbol.clone();
+        let symbol = self.target.read().unwrap().symbol.clone();
         let bids = Arc::clone(&self.bids);
         let asks = Arc::clone(&self.asks);
         tokio::spawn(matcher.match_order(symbol, bids, asks));
@@ -180,37 +176,33 @@ impl OrderBook {
     pub fn update_push_buy_order_before_event(
         &mut self,
         push_buy_order_before_event: Option<PushOrderEvent>,
-    ) -> Self {
+    ) {
         let mut bids = self.bids.write().unwrap();
         bids.push_buy_order_before_event = push_buy_order_before_event;
-        self.clone()
     }
     /// update push buy order after event
     pub fn update_push_buy_order_after_event(
         &mut self,
         push_buy_order_after_event: Option<PushOrderEvent>,
-    ) -> Self {
+    ) {
         let mut bids = self.bids.write().unwrap();
         bids.push_buy_order_after_event = push_buy_order_after_event;
-        self.clone()
     }
     /// update push sell order before event
     pub fn update_push_sell_order_before_event(
         &mut self,
         push_sell_order_before_event: Option<PushOrderEvent>,
-    ) -> Self {
+    ) {
         let mut asks = self.asks.write().unwrap();
         asks.push_sell_order_before_event = push_sell_order_before_event;
-        self.clone()
     }
     /// update push sell order after event
     pub fn update_push_sell_order_after_event(
         &mut self,
         push_sell_order_after_event: Option<PushOrderEvent>,
-    ) -> Self {
+    ) {
         let mut asks = self.asks.write().unwrap();
         asks.push_sell_order_after_event = push_sell_order_after_event;
-        self.clone()
     }
 }
 
@@ -327,6 +319,10 @@ where
     pub fn get_price_num(&self) -> u64 {
         self.tree.len().try_into().unwrap()
     }
+    /// get order tree
+    pub fn order_tree(&self) -> &BTreeMap<P, Vec<Order>> {
+        &self.tree
+    }
     pub fn cancel(&mut self, order: Order) {}
 }
 
@@ -364,17 +360,5 @@ impl Order {
             crt_time: Utc::now().to_string(),
             ex: None,
         }
-    }
-}
-
-// order book trade target abstract
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Target {
-    price: f64,
-}
-
-impl Target {
-    pub fn new(price: f64) -> Self {
-        Self { price: price }
     }
 }
