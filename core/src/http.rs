@@ -134,6 +134,7 @@ impl CreateOrderBookVO {
 struct OrderVO {
     pub symbol: String,
     pub price: f64,
+    pub quantity: f64,
     pub order_direction: OrderDirection,
     pub ex: Option<String>,
 }
@@ -144,6 +145,7 @@ impl OrderVO {
             "1".to_string(),
             self.symbol.clone(),
             self.price,
+            self.quantity,
             self.order_direction.clone(),
         );
         order

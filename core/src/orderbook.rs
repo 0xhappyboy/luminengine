@@ -128,7 +128,7 @@ impl OrderBook {
     }
     /// push order specific implementation logic.
     pub fn push_order(&mut self, order: Order) {
-        match order.order_direction {
+        match order.direction {
             OrderDirection::Buy => {
                 let mut bids = self.bids.write().unwrap();
                 bids.push(order);
@@ -257,7 +257,7 @@ where
     // Push orders to the order tree
     pub fn push(&mut self, order: Order) {
         // before successfully placing the order
-        match order.order_direction {
+        match order.direction {
             OrderDirection::Buy => {
                 // buy order
                 if self.push_buy_order_before_event.is_some() {
@@ -281,7 +281,7 @@ where
             self.tree.insert(P::new(order.price), vec![order.clone()]);
         }
         // after successfully placing the order
-        match order.order_direction {
+        match order.direction {
             OrderDirection::Buy => {
                 if self.push_buy_order_after_event.is_some() {
                     self.push_buy_order_after_event.unwrap()(order);
@@ -327,23 +327,47 @@ where
 }
 
 /// for each order abstract
+///
+/// # Field
+/// * id - order id
+/// * symbol - symbol
+/// * price - price
+/// * direction - order direction
+/// * quantity - quote unit overall quantity
+/// * remaining - quote unit remaining quantity
+/// * filled - quote unit completed quantity
+/// * crt_time - order create time
+/// * ex - Extend fields
+///
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Order {
     pub id: String,
     pub symbol: String,
     pub price: f64,
-    pub order_direction: OrderDirection,
+    pub direction: OrderDirection,
+    pub quantity: f64,
+    pub remaining: f64,
+    pub filled: f64,
     pub crt_time: String,
     pub ex: Option<String>,
 }
 
 impl Order {
-    pub fn new(id: String, symbol: String, price: f64, order_direction: OrderDirection) -> Self {
+    pub fn new(
+        id: String,
+        symbol: String,
+        price: f64,
+        quantity: f64,
+        order_direction: OrderDirection,
+    ) -> Self {
         Self {
             id: id,
             symbol: symbol,
             price: price,
-            order_direction: order_direction,
+            direction: order_direction,
+            quantity: quantity,
+            remaining: quantity,
+            filled: 0.0,
             crt_time: Utc::now().to_string(),
             ex: None,
         }
@@ -356,9 +380,31 @@ impl Order {
             id: 1.to_string(),
             symbol: order.symbol,
             price: order.price.into(),
-            order_direction: order_direction,
+            direction: order_direction,
+            quantity: 0.0,
+            remaining: 0.0,
+            filled: 0.0,
             crt_time: Utc::now().to_string(),
             ex: None,
         }
+    }
+}
+
+/// order status
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderStatus {
+    // waiting for deal
+    Pending,
+    // order partial deal
+    Partial,
+    // order complete deal
+    Filled,
+    // order has been canceled
+    Cancelled,
+}
+
+impl Default for OrderStatus {
+    fn default() -> Self {
+        OrderStatus::Pending
     }
 }
