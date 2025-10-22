@@ -1,7 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use crate::config::RPC_LISTENER_PORT;
-use crate::orderbook::{OrderBooks, OrderDirection};
+use crate::order::OrderDirection;
+use crate::orderbook::OrderBooks;
 use crate::target::Target;
 /// order book RPC service, RPC service for handling order books
 use orderbook::order_book_service_server::{OrderBookService, OrderBookServiceServer};
@@ -58,12 +59,12 @@ impl OrderBookService for OrderBookRPCService {
     }
     // buy order
     async fn buy(&self, request: Request<Order>) -> Result<Response<OrderResponse>, Status> {
-        let order: crate::rpc::server::orderbook::Order = request.into_inner();
+        let order: crate::net::rpc::server::orderbook::Order = request.into_inner();
         handle_order(order, OrderDirection::Buy)
     }
     // sell order
     async fn sell(&self, request: Request<Order>) -> Result<Response<OrderResponse>, Status> {
-        let order: crate::rpc::server::orderbook::Order = request.into_inner();
+        let order: crate::net::rpc::server::orderbook::Order = request.into_inner();
         handle_order(order, OrderDirection::Sell)
     }
     // cancel order
@@ -76,7 +77,7 @@ impl OrderBookService for OrderBookRPCService {
         Ok(Response::new(response))
     }
 }
-fn param_verif(order: crate::rpc::server::orderbook::Order) -> Result<(), Status> {
+fn param_verif(order: crate::net::rpc::server::orderbook::Order) -> Result<(), Status> {
     if order.symbol.is_empty() {
         return Err(Status::new(
             tonic::Code::FailedPrecondition,
@@ -93,7 +94,7 @@ fn param_verif(order: crate::rpc::server::orderbook::Order) -> Result<(), Status
 }
 
 fn handle_order(
-    order: crate::rpc::server::orderbook::Order,
+    order: crate::net::rpc::server::orderbook::Order,
     order_direction: OrderDirection,
 ) -> Result<Response<OrderResponse>, Status> {
     let response;
@@ -103,7 +104,7 @@ fn handle_order(
                 orderbook
                     .write()
                     .unwrap()
-                    .push_order(crate::orderbook::Order::from_rpc_order(
+                    .push_order(crate::order::Order::from_rpc_order(
                         order.clone(),
                         order_direction,
                     ));

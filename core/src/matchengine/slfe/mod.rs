@@ -1,3 +1,4 @@
+pub mod processor;
 pub mod sharding;
 pub mod status;
 /// Sharded lock-free event order book matching engine.
@@ -14,6 +15,7 @@ use std::{
 use tokio::join;
 
 use crate::market::{MarketDepth, MarketDepthSnapshot};
+use crate::matchengine::slfe::processor::OrderProcessor;
 use crate::matchengine::slfe::sharding::{OrderLocation, OrderTreeSharding};
 use crate::matchengine::slfe::status::SlfeStats;
 use crate::matchengine::tool::math::{
@@ -21,11 +23,10 @@ use crate::matchengine::tool::math::{
 };
 use crate::matchengine::tool::slfe::cal_total_quote_value_for_ordertree;
 use crate::matchengine::{MatchEngineError, MatchEvent, MatchResult};
-use crate::orderbook::OrderTree;
+use crate::order::{Order, OrderDirection};
 use crate::price::PriceLevel;
 use crate::{
     matchengine::MatchEngineConfig,
-    orderbook::{Order, OrderDirection},
     price::{AskPrice, BidPrice, Price},
 };
 
@@ -96,6 +97,7 @@ impl Slfe {
             join!(task);
         }
     }
+    /// start event engine
     async fn start_event_engine(self: Arc<Self>) {
         let mut event_batch = Vec::<MatchEvent>::with_capacity(self.config.read().batch_size);
         let mut last_process_time = Instant::now();
@@ -128,7 +130,7 @@ impl Slfe {
         let adjustment_interval = Duration::from_secs(2);
         let s = self.clone();
         loop {
-            let depth = s.clone().get_market_depth().await;
+            let depth = MarketDepth::from_slfe(self.clone()).await;
             // update mid price
             if let Some(mid_price) = s.calculate_mid_price() {
                 s.mid_price
@@ -148,7 +150,7 @@ impl Slfe {
         let mut total_matched = 0;
         while match_occurred {
             match_occurred = false;
-            if let Some(results) = self.execute_immediate_match().await {
+            if let Some(results) = OrderProcessor::handle_limit_order(self).await {
                 if !results.is_empty() {
                     match_occurred = true;
                     total_matched += results.len();
@@ -172,128 +174,7 @@ impl Slfe {
                 .store(f64_to_atomic(mid_price), Ordering::Relaxed);
         }
     }
-    async fn execute_immediate_match(&self) -> Option<Vec<MatchResult>> {
-        let best_bid = self.bids.get_best_price();
-        let best_ask = self.asks.get_best_price();
-        if let (Some(bid_price), Some(ask_price)) = (best_bid, best_ask) {
-            if bid_price.price >= ask_price.price {
-                return Some(self.match_across_shards(&bid_price, &ask_price).await);
-            }
-        }
-        None
-    }
-    async fn match_across_shards(
-        &self,
-        bid_price: &BidPrice,
-        ask_price: &AskPrice,
-    ) -> Vec<MatchResult> {
-        let mut all_results = Vec::new();
-        for bid_shard_id in 0..self.config.read().shard_count {
-            for ask_shard_id in 0..self.config.read().shard_count {
-                let results = self
-                    .match_shard_pair(bid_shard_id, ask_shard_id, bid_price, ask_price)
-                    .await;
-                all_results.extend(results);
-            }
-        }
-        all_results
-    }
-    async fn match_shard_pair(
-        &self,
-        bid_shard_id: usize,
-        ask_shard_id: usize,
-        bid_price: &BidPrice,
-        ask_price: &AskPrice,
-    ) -> Vec<MatchResult> {
-        let (bid_orders_data, ask_orders_data) = {
-            let bid_shard = self.bids.shards[bid_shard_id].read();
-            let ask_shard = self.asks.shards[ask_shard_id].read();
-            let bid_orders = bid_shard.tree.get(bid_price).cloned();
-            let ask_orders = ask_shard.tree.get(ask_price).cloned();
-            (bid_orders, ask_orders)
-        };
-        let (mut bid_orders, mut ask_orders) = match (bid_orders_data, ask_orders_data) {
-            (Some(bid), Some(ask)) => (bid, ask),
-            _ => return Vec::new(),
-        };
-        let original_bid_count = bid_orders.len();
-        let original_ask_count = ask_orders.len();
-        let results = self
-            .match_order_queues(&mut bid_orders, &mut ask_orders)
-            .await;
-        if results.is_empty() {
-            return results;
-        }
-        {
-            let mut bid_shard = self.bids.shards[bid_shard_id].write();
-            let mut ask_shard = self.asks.shards[ask_shard_id].write();
-            let matched_bid_orders = original_bid_count - bid_orders.len();
-            let matched_ask_orders = original_ask_count - ask_orders.len();
-            bid_shard.total_orders -= matched_bid_orders;
-            ask_shard.total_orders -= matched_ask_orders;
-            if bid_orders.is_empty() {
-                bid_shard.tree.remove(bid_price);
-            } else {
-                bid_shard.tree.insert(bid_price.clone(), bid_orders);
-            }
-            if ask_orders.is_empty() {
-                ask_shard.tree.remove(ask_price);
-            } else {
-                ask_shard.tree.insert(ask_price.clone(), ask_orders);
-            }
-        }
-        results
-    }
-    async fn match_order_queues(
-        &self,
-        bid_orders: &mut VecDeque<Order>,
-        ask_orders: &mut VecDeque<Order>,
-    ) -> Vec<MatchResult> {
-        let mut results = Vec::new();
-        let match_price = bid_orders
-            .front()
-            .unwrap()
-            .price
-            .min(ask_orders.front().unwrap().price);
-        let mut bid_index = 0;
-        let mut ask_index = 0;
-        while bid_index < bid_orders.len() && ask_index < ask_orders.len() {
-            let bid_order = &mut bid_orders[bid_index];
-            let ask_order = &mut ask_orders[ask_index];
-            if bid_order.can_trade() && ask_order.can_trade() {
-                let match_qty = bid_order.remaining.min(ask_order.remaining);
-                if match_qty > 0.0 {
-                    results.push(MatchResult {
-                        bid_order_id: bid_order.id.clone(),
-                        ask_order_id: ask_order.id.clone(),
-                        price: match_price,
-                        quantity: match_qty,
-                        timestamp: Instant::now(),
-                    });
-                    bid_order.execute_trade(match_qty);
-                    ask_order.execute_trade(match_qty);
-                }
-                if bid_order.remaining <= 0.0 {
-                    bid_orders.remove(bid_index);
-                } else {
-                    bid_index += 1;
-                }
-                if ask_order.remaining <= 0.0 {
-                    ask_orders.remove(ask_index);
-                } else {
-                    ask_index += 1;
-                }
-            } else {
-                if !bid_order.can_trade() {
-                    bid_index += 1;
-                }
-                if !ask_order.can_trade() {
-                    ask_index += 1;
-                }
-            }
-        }
-        results
-    }
+
     /// Test function, may be deleted in the future.
     async fn notify_match_results(&self, results: Vec<MatchResult>) {
         for result in results {
@@ -342,7 +223,7 @@ impl Slfe {
                 MatchEvent::NewOrder(_order) => {
                     processed += 1;
                     let self_clone = self.clone();
-                    if let Some(results) = self_clone.execute_immediate_match().await {
+                    if let Some(results) = OrderProcessor::handle_limit_order(&self).await {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
                         let self_clone = self.clone();
@@ -355,7 +236,7 @@ impl Slfe {
                     self_clone.handle_cancellation(order_id).await;
                 }
                 MatchEvent::ImmediateMatch => {
-                    if let Some(results) = self.execute_immediate_match().await {
+                    if let Some(results) = OrderProcessor::handle_limit_order(&self).await {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
                         let self_clone = self.clone();
@@ -437,17 +318,7 @@ impl Slfe {
             }
         }
     }
-    async fn get_market_depth(self: Arc<Self>) -> MarketDepth {
-        MarketDepth {
-            bid_order_count: self.bids.get_total_order_count(),
-            ask_order_count: self.asks.get_total_order_count(),
-            best_bid: self.bids.get_best_price().map(|p| p.to_f64()),
-            best_ask: self.asks.get_best_price().map(|p| p.to_f64()),
-            spread: self.calculate_spread(),
-            timestamp: Instant::now(),
-        }
-    }
-    fn calculate_spread(self: Arc<Self>) -> f64 {
+    pub fn calculate_spread(self: Arc<Self>) -> f64 {
         if let (Some(best_bid), Some(best_ask)) =
             (self.bids.get_best_price(), self.asks.get_best_price())
         {

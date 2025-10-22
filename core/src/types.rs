@@ -1,7 +1,4 @@
-use std::sync::{Arc, RwLock};
-
-use crate::orderbook::{Order, OrderBooks};
-use lazy_static::lazy_static;
+use crate::order::Order;
 
 /// push order event
 pub type PushOrderEvent = fn(order: Order);

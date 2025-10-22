@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    config::HTTP_LISTENER_PORT,
-    orderbook::{Order, OrderBook, OrderBooks, OrderDirection, OrderStatus},
-    target::Target,
+    config::HTTP_LISTENER_PORT, order::{Order, OrderDirection, OrderStatus}, orderbook::{OrderBook, OrderBooks}, target::Target
 };
 
 /// order book http service, HTTP service for handling order books

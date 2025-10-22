@@ -67,6 +67,7 @@ impl PartialEq for BidPrice {
 }
 
 impl Eq for BidPrice {}
+
 impl Price for BidPrice {
     fn new(price: f64) -> Self {
         BidPrice { price: price }
@@ -115,6 +116,7 @@ impl PartialEq for AskPrice {
 }
 
 impl Eq for AskPrice {}
+
 impl Price for AskPrice {
     fn new(price: f64) -> Self {
         AskPrice { price: price }

@@ -4,9 +4,8 @@ use tokio::{join, task::JoinHandle};
 
 use crate::{
     config::{HTTP_LISTENER_PORT, RPC_LISTENER_PORT},
-    http::OrderBookHttpService,
+    net::{http::OrderBookHttpService, rpc::server::OrderBookRPCService},
     orderbook::{OrderBooks, OrderSourceChannel},
-    rpc::server::OrderBookRPCService,
 };
 
 #[derive(Clone)]

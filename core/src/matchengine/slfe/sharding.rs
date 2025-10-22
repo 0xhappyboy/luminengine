@@ -6,8 +6,8 @@ use std::{
 use parking_lot::RwLock;
 
 use crate::{
-    orderbook::{Order, OrderDirection, OrderTree},
-    price::{BidPrice, Price},
+    order::{Order, OrderDirection, OrderTree},
+    price::{AskPrice, BidPrice, Price},
 };
 
 #[derive(Debug, Clone)]
@@ -309,5 +309,55 @@ where
             }
         }
         distribution
+    }
+}
+
+/// A specific implementation of the BidPrice type.
+impl OrderTreeSharding<BidPrice> {
+    pub fn get_all_bid_prices_sorted(&self) -> Vec<BidPrice> {
+        let mut all_prices = Vec::new();
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            for price in shard_guard.tree.keys() {
+                all_prices.push(price.clone());
+            }
+        }
+        all_prices.sort();
+        all_prices
+    }
+
+    pub fn get_all_bid_prices_sorted_desc(&self) -> Vec<BidPrice> {
+        self.get_all_bid_prices_sorted()
+    }
+
+    pub fn get_all_bid_prices_sorted_asc(&self) -> Vec<BidPrice> {
+        let mut prices = self.get_all_bid_prices_sorted();
+        prices.reverse();
+        prices
+    }
+}
+
+/// A specific implementation of the AskPrice type.
+impl OrderTreeSharding<AskPrice> {
+    pub fn get_all_ask_prices_sorted(&self) -> Vec<AskPrice> {
+        let mut all_prices = Vec::new();
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            for price in shard_guard.tree.keys() {
+                all_prices.push(price.clone());
+            }
+        }
+        all_prices.sort();
+        all_prices
+    }
+
+    pub fn get_all_ask_prices_sorted_desc(&self) -> Vec<AskPrice> {
+        let mut prices = self.get_all_ask_prices_sorted();
+        prices.reverse();
+        prices
+    }
+
+    pub fn get_all_ask_prices_sorted_asc(&self) -> Vec<AskPrice> {
+        self.get_all_ask_prices_sorted()
     }
 }

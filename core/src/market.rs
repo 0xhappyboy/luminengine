@@ -1,6 +1,9 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
-use crate::price::PriceLevel;
+use crate::{
+    matchengine::slfe::{self, Slfe},
+    price::{Price, PriceLevel},
+};
 
 /// Market Depth Information Structure
 #[derive(Debug)]
@@ -11,6 +14,19 @@ pub struct MarketDepth {
     pub best_ask: Option<f64>,  // Best selling price
     pub spread: f64,            // Bid-ask spread
     pub timestamp: Instant,     // Timestamp
+}
+
+impl MarketDepth {
+    pub async fn from_slfe(slfe: Arc<Slfe>) -> Self {
+        MarketDepth {
+            bid_order_count: slfe.bids.get_total_order_count(),
+            ask_order_count: slfe.asks.get_total_order_count(),
+            best_bid: slfe.bids.get_best_price().map(|p| p.to_f64()),
+            best_ask: slfe.asks.get_best_price().map(|p| p.to_f64()),
+            spread: slfe.calculate_spread(),
+            timestamp: Instant::now(),
+        }
+    }
 }
 
 /// Depth of Market Snapshot Abstract.
