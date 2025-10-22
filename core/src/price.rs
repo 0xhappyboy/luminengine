@@ -123,3 +123,11 @@ impl Price for AskPrice {
         self.price
     }
 }
+
+/// Price Level, an abstraction for each price level in the order book.
+#[derive(Debug, Clone)]
+pub struct PriceLevel {
+    pub price: f64,
+    pub quantity: f64,
+    pub order_count: usize,
+}

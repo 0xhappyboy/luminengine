@@ -10,10 +10,12 @@ use std::{
     time::Instant,
 };
 use tokio::join;
-use tokio::task::JoinHandle;
 
-use crate::matchengine::{MarketDepth, MatchEngineError, MatchResult};
+use crate::market::{MarketDepth, MarketDepthSnapshot};
+use crate::matchengine::tool::slfe::cal_total_quote_value_for_ordertree;
+use crate::matchengine::{MatchEngineError, MatchEvent, MatchResult};
 use crate::orderbook::OrderTree;
+use crate::price::PriceLevel;
 use crate::{
     matchengine::MatchEngineConfig,
     orderbook::{Order, OrderDirection},
@@ -26,14 +28,6 @@ pub struct OrderLocation {
     pub direction: OrderDirection,
     pub shard_id: usize,
     pub order_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum MatchEvent {
-    NewOrder(Order),
-    CancelOrder(String), // order_id
-    ImmediateMatch,
-    Shutdown,
 }
 
 #[derive(Debug)]
@@ -148,6 +142,186 @@ where
             false
         }
     }
+    /// Get the total order quantity at a specified price.
+    pub fn get_order_count_by_price(&self, price: f64) -> usize {
+        let price_key = P::new(price);
+        let mut total_count = 0;
+
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            if let Some(orders) = shard_guard.tree.get(&price_key) {
+                total_count += orders.len();
+            }
+        }
+        total_count
+    }
+    /// Get the total base quantity at the specified price.
+    /// # Example
+    /// ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    /// │    INPUT PRICE   │   ORDER STATE    │  BASE TOKEN      │  RETURN VALUE    │
+    /// │   (QUOTE)        │   AT PRICE LEVEL │  CALCULATION     │  (BASE TOTAL)    │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 50000.0 │ Shard0: [0.5 BTC,│ 0.5 + 1.2 + 0.3  │      2.0 BTC     │
+    /// │     (USDT)       │ 1.2 BTC]         │                  │                  │
+    /// │                  │ Shard1: [0.3 BTC]│                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 51000.0 │ All shards: []   │ 0.0              │      0.0 BTC     │
+    /// │     (USDT)       │ (No orders)      │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 2.5     │ Shard0: [1000 ETH│ 1000 + 500       │     1500 ETH     │
+    /// │     (USDT)       │ Shard1: [500 ETH]│                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 1.0     │ Shard2: [50000   │ 50000            │    50000 ADA     │
+    /// │     (USDT)       │ ADA]             │                  │                  │
+    /// └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    pub fn get_total_base_unit_by_price(&self, price: f64) -> f64 {
+        let price_key = P::new(price);
+        let mut total_quantity = 0.0;
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            if let Some(orders) = shard_guard.tree.get(&price_key) {
+                for order in orders {
+                    total_quantity += order.remaining;
+                }
+            }
+        }
+        total_quantity
+    }
+
+    /// Get the total value of the quote for the specified price.
+    /// # Example
+    /// ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    /// │    INPUT PRICE   │   ORDER STATE    │  QUOTE TOKEN     │  RETURN VALUE    │
+    /// │   (QUOTE)        │   AT PRICE LEVEL │  CALCULATION     │  (QUOTE TOTAL)   │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 50000.0 │ Shard0: [0.5 BTC,│ (0.5 × 50000) +  │   100000.0 USD   │
+    /// │     (USDT)       │ 1.2 BTC]         │ (1.2 × 50000) +  │                  │
+    /// │                  │ Shard1: [0.3 BTC]│ (0.3 × 50000)    │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 51000.0 │ All shards: []   │ 0.0              │      0.0 USD     │
+    /// │     (USDT)       │ (No orders)      │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 2.5     │ Shard0: [1000 ETH│ (1000 × 2.5) +   │     3750.0 USD   │
+    /// │     (USDT)       │ Shard1: [500 ETH]│ (500 × 2.5)      │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  price = 1.0     │ Shard2: [50000   │ 50000 × 1.0      │   50000.0 USD    │
+    /// │     (USDT)       │ ADA]             │                  │                  │
+    /// └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    pub fn get_total_quote_value_by_price(&self, price: f64) -> f64 {
+        let price_key = P::new(price);
+        let mut total_quote_value = 0.0;
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            if let Some(orders) = shard_guard.tree.get(&price_key) {
+                for order in orders {
+                    // quote_value = base_quantity * price
+                    total_quote_value += order.remaining * price;
+                }
+            }
+        }
+        total_quote_value
+    }
+
+    /// Get a map of all price tiers relative to order quantities.
+    /// # Example
+    /// ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    /// │   PRICE LEVEL    │   ORDER STATE    │  ORDER COUNT     │  RETURN VALUE    │
+    /// │    (Quote)       │   AT PRICE LEVEL │  CALCULATION     │  (Order Total)   │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  50000.0         │ [OrderA, OrderB, │ 2 + 1 = 3        │        3         │
+    /// │  (USDT/BTC)      │ OrderC]+[OrderD] │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  50100.0         │ [OrderE]         │ 1                │        1         │
+    /// │  (USDT/BTC)      │                  │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  50200.0         │ [OrderF, OrderG] │ 2                │        2         │
+    /// │  (USDT/BTC)      │                  │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  49900.0         │ [] (No orders)   │ 0                │        0         │
+    /// │  (USDT/BTC)      │                  │                  │                  │
+    /// └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    /// # Returns
+    /// * map { k: price level, v: order count }
+    pub fn get_price_level_total_order(&self) -> BTreeMap<u64, usize> {
+        let mut distribution = BTreeMap::new();
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            for (price, orders) in &shard_guard.tree {
+                let price_key = (price.to_f64() * 10000.0) as u64;
+                *distribution.entry(price_key).or_insert(0) += orders.len();
+            }
+        }
+        distribution
+    }
+    /// Gets a map of the sum of base units for all price levels.
+    /// # Example
+    /// ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    /// │   PRICE LEVEL    │   ORDER STATE    │  BASE QUANTITY   │  RETURN VALUE    │
+    /// │    (Quote)       │   AT PRICE LEVEL │  CALCULATION     │  (Base Total)    │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  50000.0         │ [0.5 BTC,1.2 BTC │ 0.5 + 1.2 + 0.3  │      2.0 BTC     │
+    /// │  (USDT/BTC)      │ ] + [0.3 BTC]    │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  2500.0          │ [1000 ETH,       │ 1000 + 500       │     1500 ETH     │
+    /// │  (USDT/ETH)      │ 500 ETH]         │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  1.0             │ [50000 ADA]      │ 50000            │    50000 ADA     │
+    /// │  (USDT/ADA)      │                  │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  51000.0         │ [] (No orders)   │ 0.0              │      0.0 BTC     │
+    /// │  (USDT/BTC)      │                  │                  │                  │
+    /// └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    /// # Returns
+    /// * map { k: price level, v: base unit total count }
+    pub fn get_price_level_total_base_unit(&self) -> BTreeMap<u64, f64> {
+        let mut distribution = BTreeMap::new();
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            for (price, orders) in &shard_guard.tree {
+                let price_key = (price.to_f64() * 10000.0) as u64;
+                let total_quantity: f64 = orders.iter().map(|order| order.remaining).sum();
+                *distribution.entry(price_key).or_insert(0.0) += total_quantity;
+            }
+        }
+        distribution
+    }
+
+    /// Get the total value of quotes for all price levels.
+    /// # Example
+    /// ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+    /// │   PRICE LEVEL    │   ORDER STATE    │  QUOTE VALUE     │  RETURN VALUE    │
+    /// │    (Quote)       │   AT PRICE LEVEL │  CALCULATION     │  (Quote Total)   │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  50000.0         │ [0.5 BTC, 1.2 BTC│ (0.5×50000) +    │   100000 USD     │
+    /// │  (USDT/BTC)      │ ] + [0.3 BTC]    │ (1.2×50000) +    │                  │
+    /// │                  │                  │ (0.3×50000)      │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  2500.0          │ [1000 ETH,       │ (1000×2500) +    │   3750000 USD    │
+    /// │  (USDT/ETH)      │ 500 ETH]         │ (500×2500)       │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  1.0             │ [50000 ADA]      │ 50000 × 1.0      │    50000 USD     │
+    /// │  (USDT/ADA)      │                  │                  │                  │
+    /// ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
+    /// │  51000.0         │ [] (No orders)   │ 0.0              │      0 USD       │
+    /// │  (USDT/BTC)      │                  │                  │                  │
+    /// └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
+    /// # Returns
+    /// * map { k: price level, v: total quote value }
+    pub fn get_price_level_total_quote_value(&self) -> BTreeMap<u64, f64> {
+        let mut distribution = BTreeMap::new();
+        for shard in &self.shards {
+            let shard_guard = shard.read();
+            for (price, orders) in &shard_guard.tree {
+                let price_key = (price.to_f64() * 10000.0) as u64;
+                let total_quote_value: f64 = orders
+                    .iter()
+                    .map(|order| order.remaining * price.to_f64())
+                    .sum();
+                *distribution.entry(price_key).or_insert(0.0) += total_quote_value;
+            }
+        }
+        distribution
+    }
 }
 
 #[derive(Debug)]
@@ -197,7 +371,7 @@ pub struct Slfe {
     pub rx: Arc<Receiver<MatchEvent>>,
     pub order_index: Arc<DashMap<String, OrderLocation>>,
     pub stats: Arc<RwLock<SlfeStats>>,
-    pub config: MatchEngineConfig,
+    pub config: Arc<RwLock<MatchEngineConfig>>,
 }
 
 impl Slfe {
@@ -211,7 +385,7 @@ impl Slfe {
             rx: Arc::new(rx),
             order_index: Arc::new(DashMap::new()),
             stats: Arc::new(RwLock::new(SlfeStats::new())),
-            config,
+            config: Arc::new(RwLock::new(config)),
         }
     }
     pub async fn start_engine(self: Arc<Self>) {
@@ -219,7 +393,7 @@ impl Slfe {
         let event_matcher = self.clone();
         let event_handle = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(event_matcher.start_event_processor())
+            runtime.block_on(event_matcher.start_event_engine())
         });
         tasks.push(event_handle);
         let depth_matcher = self.clone();
@@ -230,24 +404,24 @@ impl Slfe {
             join!(task);
         }
     }
-    async fn start_event_processor(self: Arc<Self>) {
-        let mut event_batch = Vec::<MatchEvent>::with_capacity(self.config.batch_size);
+    async fn start_event_engine(self: Arc<Self>) {
+        let mut event_batch = Vec::<MatchEvent>::with_capacity(self.config.read().batch_size);
         let mut last_process_time = Instant::now();
-        let process_interval = Duration::from_micros(self.config.match_interval);
+        let process_interval = Duration::from_micros(self.config.read().match_interval);
         let matcher = self.clone();
         loop {
             while let Ok(event) = matcher.rx.try_recv() {
                 event_batch.push(event);
-                if event_batch.len() >= matcher.config.batch_size {
+                if event_batch.len() >= matcher.config.read().batch_size {
                     let matcher = self.clone();
-                    matcher.process_event_batch(&event_batch).await;
+                    matcher.handle_event_batch(&event_batch).await;
                     event_batch.clear();
                     last_process_time = Instant::now();
                 }
             }
             if !event_batch.is_empty() && last_process_time.elapsed() >= process_interval {
                 let matcher = self.clone();
-                matcher.process_event_batch(&event_batch).await;
+                matcher.handle_event_batch(&event_batch).await;
                 event_batch.clear();
                 last_process_time = Instant::now();
             }
@@ -263,10 +437,10 @@ impl Slfe {
         let s = self.clone();
         loop {
             let depth = s.clone().get_market_depth().await;
-            if s.clone().config.enable_auto_tuning
+            if s.clone().config.read().enable_auto_tuning
                 && last_adjustment.elapsed() >= adjustment_interval
             {
-                s.clone().adaptive_tuning(&depth).await;
+                s.clone().auto_tuning(&depth).await;
                 last_adjustment = Instant::now();
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -305,8 +479,8 @@ impl Slfe {
         ask_price: &AskPrice,
     ) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
-        for bid_shard_id in 0..self.config.shard_count {
-            for ask_shard_id in 0..self.config.shard_count {
+        for bid_shard_id in 0..self.config.read().shard_count {
+            for ask_shard_id in 0..self.config.read().shard_count {
                 let results = self
                     .match_shard_pair(bid_shard_id, ask_shard_id, bid_price, ask_price)
                     .await;
@@ -424,7 +598,7 @@ impl Slfe {
             }
         }
     }
-    async fn process_cancellation(self: Arc<Self>, order_id: &str) {
+    async fn handle_cancellation(self: Arc<Self>, order_id: &str) {
         if let Some(location) = self.order_index.get(order_id) {
             match location.direction {
                 OrderDirection::Buy => {
@@ -438,14 +612,15 @@ impl Slfe {
             self.order_index.remove(order_id);
         }
     }
-    async fn process_event_batch(self: Arc<Self>, events: &[MatchEvent]) {
+    /// Used to batch process all events in a blocked thread.
+    async fn handle_event_batch(self: Arc<Self>, events: &[MatchEvent]) {
         let start_time = Instant::now();
         let mut processed = 0;
         let mut matched = 0;
         let mut total_quantity = 0.0;
         for event in events {
             match event {
-                MatchEvent::NewOrder(order) => {
+                MatchEvent::NewOrder(_order) => {
                     processed += 1;
                     let self_clone = self.clone();
                     if let Some(results) = self_clone.execute_immediate_match().await {
@@ -458,7 +633,7 @@ impl Slfe {
                 MatchEvent::CancelOrder(order_id) => {
                     processed += 1;
                     let self_clone = self.clone();
-                    self_clone.process_cancellation(order_id).await;
+                    self_clone.handle_cancellation(order_id).await;
                 }
                 MatchEvent::ImmediateMatch => {
                     if let Some(results) = self.execute_immediate_match().await {
@@ -467,6 +642,12 @@ impl Slfe {
                         let self_clone = self.clone();
                         self_clone.notify_match_results(results).await;
                     }
+                }
+                MatchEvent::UpdateConfig {
+                    batch_size: _,
+                    match_interval: _,
+                } => {
+                    // Matching engine configuration update event, currently no implementation.
                 }
                 MatchEvent::Shutdown => {
                     return;
@@ -498,22 +679,31 @@ impl Slfe {
         }
         stats.last_update = Instant::now();
     }
-    async fn adaptive_tuning(self: Arc<Self>, depth: &MarketDepth) {
-        let total_orders = depth.bid_order_count + depth.ask_order_count;
-        let new_batch_size = if total_orders > 1_000_000 {
-            200
-        } else if total_orders > 100_000 {
-            500
-        } else {
-            1000
-        };
-        let new_interval = if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.0005 {
-            10
-        } else if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.001 {
-            25
-        } else {
-            50
-        };
+    async fn auto_tuning(self: Arc<Self>, depth: &MarketDepth) {
+        if (self.config.read().enable_auto_tuning) {
+            let total_orders = depth.bid_order_count + depth.ask_order_count;
+            // new batch size
+            let batch_size = if total_orders > 1_000_000 {
+                200
+            } else if total_orders > 100_000 {
+                500
+            } else {
+                1000
+            };
+            // new match interval
+            let match_interval = if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.0005 {
+                10
+            } else if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.001 {
+                25
+            } else {
+                50
+            };
+            {
+                let mut config = self.config.write();
+                config.set_batch_size(batch_size);
+                config.set_match_interval(match_interval);
+            }
+        }
     }
     async fn get_market_depth(self: Arc<Self>) -> MarketDepth {
         MarketDepth {
@@ -571,5 +761,141 @@ impl Slfe {
         let self_clone = self.clone();
         self_clone.update_stats(1, 0, 0.0, start_time.elapsed());
         Ok(())
+    }
+
+    /// Get a map of all price tiers relative to order quantities.
+    pub async fn get_price_level_total_order(
+        &self,
+        direction: OrderDirection,
+    ) -> BTreeMap<u64, usize> {
+        match direction {
+            OrderDirection::Buy => self.bids.get_price_level_total_order(),
+            OrderDirection::Sell => self.asks.get_price_level_total_order(),
+            OrderDirection::None => BTreeMap::new(),
+        }
+    }
+
+    /// Gets a map of the sum of base units for all price levels.
+    pub async fn get_price_level_total_base_unit(
+        &self,
+        direction: OrderDirection,
+    ) -> BTreeMap<u64, f64> {
+        match direction {
+            OrderDirection::Buy => self.bids.get_price_level_total_base_unit(),
+            OrderDirection::Sell => self.asks.get_price_level_total_base_unit(),
+            OrderDirection::None => BTreeMap::new(),
+        }
+    }
+
+    /// Get the total value of quotes for all price levels.
+    pub async fn get_price_level_total_quote_value(
+        &self,
+        direction: OrderDirection,
+    ) -> BTreeMap<u64, f64> {
+        match direction {
+            OrderDirection::Buy => self.bids.get_price_level_total_quote_value(),
+            OrderDirection::Sell => self.asks.get_price_level_total_quote_value(),
+            OrderDirection::None => BTreeMap::new(),
+        }
+    }
+
+    /// get the quantity of orders with a specified price and a specified trading direction\
+    ///
+    /// # Return
+    /// * usize: order count
+    pub async fn get_order_count_by_price(&self, price: f64, direction: OrderDirection) -> usize {
+        match direction {
+            OrderDirection::Buy => self.bids.get_order_count_by_price(price),
+            OrderDirection::Sell => self.asks.get_order_count_by_price(price),
+            OrderDirection::None => 0,
+        }
+    }
+
+    /// Get the total number of Base units available for trading at the specified price and in the specified trading direction (the left unit of the trading pair).
+    /// # Return
+    /// * f64: total base unit
+    pub async fn get_total_base_unit_by_price(&self, price: f64, direction: OrderDirection) -> f64 {
+        match direction {
+            OrderDirection::Buy => self.bids.get_total_base_unit_by_price(price),
+            OrderDirection::Sell => self.asks.get_total_base_unit_by_price(price),
+            OrderDirection::None => 0.0,
+        }
+    }
+
+    /// Get the total value of quote units at a specified price and in a specified trading direction.
+    /// # Return
+    /// * f64: total quote unit value
+    pub async fn get_total_quote_unit_value(&self, price: f64, direction: OrderDirection) -> f64 {
+        match direction {
+            OrderDirection::Buy => self.bids.get_total_quote_value_by_price(price),
+            OrderDirection::Sell => self.asks.get_total_quote_value_by_price(price),
+            OrderDirection::None => 0.0,
+        }
+    }
+    /// Get the total value of quote units in a specified trading direction.
+    /// # Return
+    /// * f64: total quote unit value
+    pub async fn get_total_quote_value_all_prices(&self, direction: OrderDirection) -> f64 {
+        match direction {
+            OrderDirection::Buy => cal_total_quote_value_for_ordertree(&self.bids),
+            OrderDirection::Sell => cal_total_quote_value_for_ordertree(&self.asks),
+            OrderDirection::None => 0.0,
+        }
+    }
+
+    /// get the number of orders in the specified trading direction.
+    pub async fn get_total_order_count_by_direction(
+        &self,
+        direction: Option<OrderDirection>,
+    ) -> usize {
+        match direction {
+            Some(OrderDirection::Buy) => self.bids.get_total_order_count(),
+            Some(OrderDirection::Sell) => self.asks.get_total_order_count(),
+            Some(OrderDirection::None) => 0,
+            None => self.bids.get_total_order_count() + self.asks.get_total_order_count(),
+        }
+    }
+
+    /// get market depth snapshot
+    pub async fn get_market_depth_snapshot(&self, levels: Option<usize>) -> MarketDepthSnapshot {
+        let bid_distribution = self.bids.get_price_level_total_base_unit();
+        let ask_distribution = self.asks.get_price_level_total_base_unit();
+        let mut bid_levels: Vec<PriceLevel> = bid_distribution
+            .iter()
+            .rev()
+            .map(|(&price_key, &quantity)| PriceLevel {
+                price: price_key as f64 / 10000.0,
+                quantity,
+                order_count: self
+                    .bids
+                    .get_order_count_by_price(price_key as f64 / 10000.0),
+            })
+            .collect();
+        let mut ask_levels: Vec<PriceLevel> = ask_distribution
+            .iter()
+            .map(|(&price_key, &quantity)| PriceLevel {
+                price: price_key as f64 / 10000.0,
+                quantity,
+                order_count: self
+                    .asks
+                    .get_order_count_by_price(price_key as f64 / 10000.0),
+            })
+            .collect();
+        // Interception depth level
+        if let Some(depth_levels) = levels {
+            if bid_levels.len() > depth_levels {
+                bid_levels.truncate(depth_levels);
+            }
+            if ask_levels.len() > depth_levels {
+                ask_levels.truncate(depth_levels);
+            }
+        }
+        MarketDepthSnapshot {
+            bids: bid_levels,
+            asks: ask_levels,
+            timestamp: Instant::now(),
+            total_bid_orders: self.bids.get_total_order_count(),
+            total_ask_orders: self.asks.get_total_order_count(),
+        }
     }
 }

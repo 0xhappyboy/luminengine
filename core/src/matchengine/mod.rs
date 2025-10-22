@@ -1,6 +1,9 @@
 use std::time::Instant;
+
+use crate::orderbook::Order;
 pub mod matcher;
 pub mod slfe;
+pub mod tool;
 
 /// match engine config
 #[derive(Debug, Clone)]
@@ -10,6 +13,21 @@ pub struct MatchEngineConfig {
     pub match_interval: u64,      // match interval, unit: microseconds
     pub max_queue_depth: usize,   // max queue depth
     pub enable_auto_tuning: bool, // enable auto tuning
+}
+
+impl MatchEngineConfig {
+    pub fn set_shard_count(&mut self, shard_count: usize) {
+        self.shard_count = shard_count;
+    }
+    pub fn set_max_queue_depth(&mut self, batch_size: usize) {
+        self.batch_size = batch_size;
+    }
+    pub fn set_match_interval(&mut self, match_interval: u64) {
+        self.match_interval = match_interval;
+    }
+    pub fn set_batch_size(&mut self, max_queue_depth: usize) {
+        self.max_queue_depth = max_queue_depth;
+    }
 }
 
 impl Default for MatchEngineConfig {
@@ -24,17 +42,6 @@ impl Default for MatchEngineConfig {
     }
 }
 
-/// Market Depth Information Structure
-#[derive(Debug)]
-struct MarketDepth {
-    bid_order_count: usize, // Total buy orders
-    ask_order_count: usize, // Total sell orders
-    best_bid: Option<f64>,  // best bid price
-    best_ask: Option<f64>,  // Best selling price
-    spread: f64,            // Bid-ask spread
-    timestamp: Instant,     // Timestamp
-}
-
 /// Match Result
 #[derive(Debug, Clone)]
 pub struct MatchResult {
@@ -43,6 +50,18 @@ pub struct MatchResult {
     pub price: f64,
     pub quantity: f64,
     pub timestamp: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchEvent {
+    NewOrder(Order),
+    CancelOrder(String), // order_id
+    ImmediateMatch,
+    Shutdown,
+    UpdateConfig {
+        batch_size: usize,
+        match_interval: u64,
+    },
 }
 
 #[derive(Debug)]
