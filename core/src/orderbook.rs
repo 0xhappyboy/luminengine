@@ -1,5 +1,5 @@
 use crate::{
-    matchengine::{MatchEngineConfig, matcher::Matcher, slfe::Slfe},
+    matchengine::{matcher::Matcher, slfe::Slfe, MatchEngineConfig},
     price::Price,
     target::Target,
 };
