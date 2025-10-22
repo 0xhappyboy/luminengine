@@ -13,6 +13,7 @@ A high-performance financial quantitative trading order book matching framework.
 
 ## Supported Order Types
 
+<div class="markdown-accessiblity-table" style="display: block; width: 100% !important; max-width: none !important;">
 <table width="100%">
   <tr>
     <th width="50%">Order Type</th>
@@ -27,6 +28,7 @@ A high-performance financial quantitative trading order book matching framework.
     <td>✅</td>
   </tr>
 </table>
+</div>
 
 ## Order Types
 
