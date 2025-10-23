@@ -310,6 +310,109 @@ where
         }
         distribution
     }
+
+    pub fn get_order_by_location(&self, location: &OrderLocation) -> Option<Order> {
+        if location.shard_id >= self.shards.len() {
+            return None;
+        }
+
+        let shard = self.shards[location.shard_id].read();
+        let price = P::new(location.price_key as f64 / 10000.0);
+
+        if let Some(orders) = shard.tree.get(&price) {
+            orders
+                .iter()
+                .find(|order| order.id == location.order_id)
+                .cloned()
+        } else {
+            None
+        }
+    }
+
+    pub fn get_order_by_id_and_shard(&self, order_id: &str, shard_id: usize) -> Option<Order> {
+        if shard_id >= self.shards.len() {
+            return None;
+        }
+        let shard = self.shards[shard_id].read();
+        for orders in shard.tree.values() {
+            if let Some(order) = orders.iter().find(|o| o.id == order_id) {
+                return Some(order.clone());
+            }
+        }
+        None
+    }
+
+    pub fn contains_order_at_location(&self, location: &OrderLocation) -> bool {
+        self.get_order_by_location(location).is_some()
+    }
+
+    pub fn update_order_by_location(&self, location: &OrderLocation, updated_order: Order) -> bool {
+        if location.shard_id >= self.shards.len() {
+            return false;
+        }
+        let mut shard = self.shards[location.shard_id].write();
+        let price = P::new(location.price_key as f64 / 10000.0);
+        if let Some(orders) = shard.tree.get_mut(&price) {
+            if let Some(index) = orders
+                .iter()
+                .position(|order| order.id == location.order_id)
+            {
+                orders[index] = updated_order;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn remove_order_by_location(&self, location: &OrderLocation) -> bool {
+        self.remove_order(&location.order_id, location.shard_id)
+    }
+
+    fn find_order_price_key(&self, shard: &OrderTree<P>, order_id: &str) -> Option<u64> {
+        for (price, orders) in &shard.tree {
+            if orders.iter().any(|order| order.id == order_id) {
+                return Some((price.to_f64() * 10000.0) as u64);
+            }
+        }
+        None
+    }
+
+    pub fn get_location_by_order_id(&self, order_id: &str) -> Option<OrderLocation> {
+        let shard_id = self.get_shard_index(order_id);
+        if shard_id >= self.shards.len() {
+            return None;
+        }
+        let shard = self.shards[shard_id].read();
+        for (price, orders) in &shard.tree {
+            if let Some(order) = orders.iter().find(|o| o.id == order_id) {
+                let price_key = (price.to_f64() * 10000.0) as u64;
+                return Some(OrderLocation {
+                    price_key,
+                    direction: order.direction.clone(),
+                    shard_id,
+                    order_id: order_id.to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    pub fn get_locations_by_order_ids(&self, order_ids: &[&str]) -> Vec<OrderLocation> {
+        let mut locations = Vec::new();
+        for &order_id in order_ids {
+            if let Some(location) = self.get_location_by_order_id(order_id) {
+                locations.push(location);
+            }
+        }
+        locations
+    }
+
+    pub fn get_order_with_location(&self, order_id: &str) -> Option<(Order, OrderLocation)> {
+        let location = self.get_location_by_order_id(order_id)?;
+        let order = self.get_order_by_location(&location)?;
+
+        Some((order, location))
+    }
 }
 
 /// A specific implementation of the BidPrice type.
@@ -335,6 +438,22 @@ impl OrderTreeSharding<BidPrice> {
         prices.reverse();
         prices
     }
+
+    pub fn get_bid_order_by_location(&self, location: &OrderLocation) -> Option<Order> {
+        self.get_order_by_location(location)
+    }
+
+    pub fn get_bid_order_location(&self, order_id: &str) -> Option<OrderLocation> {
+        self.get_location_by_order_id(order_id)
+    }
+
+    pub fn get_bid_locations_by_order_ids(&self, order_ids: &[&str]) -> Vec<OrderLocation> {
+        self.get_locations_by_order_ids(order_ids)
+    }
+
+    pub fn get_bid_order_with_location(&self, order_id: &str) -> Option<(Order, OrderLocation)> {
+        self.get_order_with_location(order_id)
+    }
 }
 
 /// A specific implementation of the AskPrice type.
@@ -359,5 +478,21 @@ impl OrderTreeSharding<AskPrice> {
 
     pub fn get_all_ask_prices_sorted_asc(&self) -> Vec<AskPrice> {
         self.get_all_ask_prices_sorted()
+    }
+
+    pub fn get_ask_order_by_location(&self, location: &OrderLocation) -> Option<Order> {
+        self.get_order_by_location(location)
+    }
+
+    pub fn get_ask_order_location(&self, order_id: &str) -> Option<OrderLocation> {
+        self.get_location_by_order_id(order_id)
+    }
+
+    pub fn get_ask_locations_by_order_ids(&self, order_ids: &[&str]) -> Vec<OrderLocation> {
+        self.get_locations_by_order_ids(order_ids)
+    }
+
+    pub fn get_ask_order_with_location(&self, order_id: &str) -> Option<(Order, OrderLocation)> {
+        self.get_order_with_location(order_id)
     }
 }
