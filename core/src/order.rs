@@ -7,7 +7,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    matchengine::slfe::iceberg_manager::{IcebergOrderEvent, IcebergOrderManager},
+    matchengine::slfe::{
+        gtc_manager::{self, GTCEvent, GTCOrderManager},
+        iceberg_manager::{IcebergOrderEvent, IcebergOrderManager},
+    },
     price::Price,
     types::{UnifiedError, UnifiedResult},
 };
@@ -176,19 +179,56 @@ impl Order {
     /// When the order is a sub-order of an iceberg order and the order is fully executed, the iceberg order will be notified.
     /// Normally, this function needs to be executed only after the limit orders of the child orders of the iceberg order are processed.
     pub fn notify_iceberg_manager(&self, iceberg_manager: &IcebergOrderManager) {
-        iceberg_manager
-            .event_tx
-            .send(IcebergOrderEvent::TierFilled {
-                display_order_id: self.id.clone(),
-                filled_quantity: self.filled,
-            });
+        if OrderType::Iceberg == self.order_type {
+            iceberg_manager
+                .event_tx
+                .send(IcebergOrderEvent::TierFilled {
+                    display_order_id: self.id.clone(),
+                    filled_quantity: self.filled,
+                });
+        }
+    }
+
+    pub fn notify_gtc_manager(&self, gtc_manager: &GTCOrderManager) {
+        if OrderType::GTC == self.order_type {
+            if OrderStatus::Partial == self.status {
+                gtc_manager.tx.send(GTCEvent::OrderPartiallyFilled {
+                    order_id: self.id.clone(),
+                    filled_quantity: self.filled,
+                    remaining_quantity: self.remaining,
+                });
+            }
+            if OrderStatus::Filled == self.status {
+                gtc_manager.tx.send(GTCEvent::OrderFilled {
+                    order_id: self.id.clone(),
+                    filled_quantity: self.filled,
+                });
+            }
+            if OrderStatus::Expired == self.status {
+                gtc_manager.tx.send(GTCEvent::OrderExpired {
+                    order_id: self.id.clone(),
+                });
+            }
+            if OrderStatus::Cancelled == self.status {
+                gtc_manager.tx.send(GTCEvent::OrderCancelled {
+                    order_id: self.id.clone(),
+                });
+            }
+        }
     }
 
     /// Execute the transaction for this order (modify the relevant balance fields)
     pub fn execute_trade(&mut self, quantity: f64) {
         self.remaining -= quantity;
         self.remaining = self.remaining.max(0.0);
-        if self.remaining == 0.0 {}
+        if self.remaining == 0.0 {
+            // Complete deal
+            self.status = OrderStatus::Filled;
+        }
+        if self.remaining > 0.0 {
+            // Partial deal
+            self.status = OrderStatus::Partial;
+        }
     }
 
     pub fn from_rpc_order(
@@ -212,7 +252,7 @@ impl Order {
     }
 
     /// order Legality verification
-    pub fn verify(&self) -> UnifiedResult {
+    pub fn verify(&self) -> UnifiedResult<String> {
         if self.price <= 0.0 {
             return Err(UnifiedError::OrderVerifyError(
                 "Price must be greater than 0".to_string(),

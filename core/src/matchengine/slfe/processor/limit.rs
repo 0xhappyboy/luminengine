@@ -114,17 +114,23 @@ impl LimitOrderProcessor {
                 if bid_order.remaining <= 0.0 {
                     // notify iceberg manager
                     bid_order.notify_iceberg_manager(&slfe.iceberg);
+                    bid_order.notify_gtc_manager(&slfe.gtc);
                     // complete deal
                     bid_orders.remove(bid_index);
                 } else {
+                    // Partial deal
+                    bid_order.notify_gtc_manager(&slfe.gtc);
                     bid_index += 1;
                 }
                 if ask_order.remaining <= 0.0 {
                     // notify iceberg manager
                     ask_order.notify_iceberg_manager(&slfe.iceberg);
+                    ask_order.notify_gtc_manager(&slfe.gtc);
                     // complete deal
                     ask_orders.remove(ask_index);
                 } else {
+                    // Partial deal
+                    ask_order.notify_gtc_manager(&slfe.gtc);
                     ask_index += 1;
                 }
             } else {

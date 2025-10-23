@@ -1,3 +1,5 @@
+pub mod expired_manager;
+pub mod gtc_manager;
 pub mod iceberg_manager;
 pub mod processor;
 pub mod sharding;
@@ -16,6 +18,8 @@ use std::{
 use tokio::join;
 
 use crate::market::{MarketDepth, MarketDepthSnapshot};
+use crate::matchengine::slfe::expired_manager::ExpiredOrderManager;
+use crate::matchengine::slfe::gtc_manager::GTCOrderManager;
 use crate::matchengine::slfe::iceberg_manager::IcebergOrderManager;
 use crate::matchengine::slfe::processor::OrderProcessor;
 use crate::matchengine::slfe::processor::day::DAYOrderProcessor;
@@ -66,8 +70,7 @@ pub struct Slfe {
     pub mid_price: Arc<AtomicU64>,
     // iceberg order manager
     pub iceberg: Arc<IcebergOrderManager>,
-    // day order handler
-    pub day_order_handler: Arc<DAYOrderProcessor>,
+    pub gtc: Arc<GTCOrderManager>,
 }
 
 impl Slfe {
@@ -93,8 +96,7 @@ impl Slfe {
             mid_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
             // iceberg order manager
             iceberg: Arc::new(IcebergOrderManager::new()),
-            // day order handler
-            day_order_handler: Arc::new(DAYOrderProcessor::new()),
+            gtc: Arc::new(GTCOrderManager::new()),
         }
     }
 
@@ -116,16 +118,20 @@ impl Slfe {
             let runtime = tokio::runtime::Handle::current();
             runtime.block_on(iceberg_arc_clone.start_manager(iceberg_self_arc_clone))
         });
-        // add iceberg handle
+        // add iceberg manager
         tasks.push(iceberg_manager);
+        // -------------------- gtc manager -------------------
+        let gtc_arc_clone = self.gtc.clone();
+        let gtc_manager = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(gtc_arc_clone.start_event_loop())
+        });
+        // add gtc manager
+        tasks.push(gtc_manager);
         // -------------------- day order handler -------------------
         let day_order_self_arc_clone = self.clone();
         tasks.push(tokio::spawn(async move {
-            day_order_self_arc_clone
-                .clone()
-                .day_order_handler
-                .start_expiry_cleanup(day_order_self_arc_clone)
-                .await
+            ExpiredOrderManager::start_expiry_cleanup(day_order_self_arc_clone).await
         }));
         // --------------------- depth monitor ---------------------
         let depth_self_arc_clone = self.clone();
@@ -336,6 +342,57 @@ impl Slfe {
             }
         }
         stats.last_update = Instant::now();
+    }
+
+    /// Get the number of transactions available in the shard
+    pub async fn get_available_quantity_for_order(&self, order: &Order) -> f64 {
+        match order.direction {
+            OrderDirection::Buy => {
+                let sorted_ask_prices = self.asks.get_all_ask_prices_sorted();
+                let mut available = 0.0;
+                for ask_price in sorted_ask_prices {
+                    if ask_price.to_f64() > order.price
+                        && order.order_type == crate::order::OrderType::Limit
+                    {
+                        break;
+                    }
+                    for shard_id in 0..self.config.read().shard_count {
+                        let shard = self.asks.shards[shard_id].read();
+                        if let Some(orders) = shard.tree.get(&ask_price) {
+                            for counter_order in orders {
+                                if counter_order.can_trade() {
+                                    available += counter_order.remaining;
+                                }
+                            }
+                        }
+                    }
+                }
+                available
+            }
+            OrderDirection::Sell => {
+                let sorted_bid_prices = self.bids.get_all_bid_prices_sorted();
+                let mut available = 0.0;
+                for bid_price in sorted_bid_prices {
+                    if bid_price.to_f64() < order.price
+                        && order.order_type == crate::order::OrderType::Limit
+                    {
+                        break;
+                    }
+                    for shard_id in 0..self.config.read().shard_count {
+                        let shard = self.bids.shards[shard_id].read();
+                        if let Some(orders) = shard.tree.get(&bid_price) {
+                            for counter_order in orders {
+                                if counter_order.can_trade() {
+                                    available += counter_order.remaining;
+                                }
+                            }
+                        }
+                    }
+                }
+                available
+            }
+            OrderDirection::None => 0.0,
+        }
     }
 
     /// auto tuning engine performance configuration.

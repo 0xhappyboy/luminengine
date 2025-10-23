@@ -10,7 +10,7 @@ use crate::{
 pub struct IcebergOrderProcessor;
 
 impl IcebergOrderProcessor {
-    pub async fn handle_iceberg_order(slfe: &Slfe, iceberg_order: Order) -> UnifiedResult<String> {
+    pub async fn handle(slfe: &Slfe, iceberg_order: Order) -> UnifiedResult<String> {
         slfe.iceberg.event_tx.send(IcebergOrderEvent::Create {
             order: iceberg_order,
             config: IcebergOrderConfig::default(),
