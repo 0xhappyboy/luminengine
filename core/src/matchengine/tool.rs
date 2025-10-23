@@ -46,3 +46,47 @@ pub mod math {
         (bid + ask) / 2.0
     }
 }
+
+pub mod expiry {
+    use std::time::{Duration, Instant};
+
+    use chrono::Timelike;
+
+    /// now to 23:59:59 to day
+    pub fn expiry_today_end() -> Instant {
+        let now = chrono::Utc::now();
+        let end_of_day = now
+            .with_hour(23)
+            .and_then(|t| t.with_minute(59))
+            .and_then(|t| t.with_second(59))
+            .unwrap_or(now + chrono::Duration::hours(24));
+
+        let duration_until_end = end_of_day - now;
+        Instant::now() + Duration::from_secs(duration_until_end.num_seconds() as u64)
+    }
+
+    /// now + 24h
+    pub fn expiry_24_hours() -> Instant {
+        Instant::now() + Duration::from_secs(24 * 60 * 60)
+    }
+
+    /// now + 12h
+    pub fn expiry_12_hours() -> Instant {
+        Instant::now() + Duration::from_secs(12 * 60 * 60)
+    }
+
+    /// now + 1h
+    pub fn expiry_1_hour() -> Instant {
+        Instant::now() + Duration::from_secs(60 * 60)
+    }
+
+    /// now + 30m
+    pub fn expiry_30_minutes() -> Instant {
+        Instant::now() + Duration::from_secs(30 * 60)
+    }
+
+    /// now + 5m
+    pub fn expiry_5_minutes() -> Instant {
+        Instant::now() + Duration::from_secs(5 * 60)
+    }
+}

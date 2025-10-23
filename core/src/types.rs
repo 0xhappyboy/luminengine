@@ -1,7 +1,7 @@
 use crate::order::Order;
 
 /// Unified result type
-pub type UnifiedResult = Result<String, UnifiedError>;
+pub type UnifiedResult<T> = Result<T, UnifiedError>;
 
 /// Unified error type
 #[derive(Debug, Clone)]

@@ -67,7 +67,7 @@ impl OrderBooks {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// border book
 pub struct OrderBook {
     pub target: Arc<RwLock<Target>>,

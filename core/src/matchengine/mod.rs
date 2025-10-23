@@ -55,7 +55,7 @@ pub struct MatchResult {
 
 #[derive(Debug, Clone)]
 pub enum MatchEvent {
-    NewOrder(Order),
+    NewLimitOrder,
     CancelOrder(String), // order_id
     ImmediateMatch,
     Shutdown,
@@ -63,10 +63,4 @@ pub enum MatchEvent {
         batch_size: usize,
         match_interval: u64,
     },
-}
-
-#[derive(Debug)]
-pub enum MatchEngineError {
-    AddOrderError(String),
-    Error(String),
 }

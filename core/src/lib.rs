@@ -10,3 +10,4 @@ pub mod types;
 pub mod market;
 pub mod order;
 pub mod net;
+pub mod global;

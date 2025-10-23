@@ -1,3 +1,4 @@
+pub mod iceberg_manager;
 pub mod processor;
 pub mod sharding;
 pub mod status;
@@ -15,16 +16,20 @@ use std::{
 use tokio::join;
 
 use crate::market::{MarketDepth, MarketDepthSnapshot};
+use crate::matchengine::slfe::iceberg_manager::IcebergOrderManager;
 use crate::matchengine::slfe::processor::OrderProcessor;
+use crate::matchengine::slfe::processor::day::DAYOrderProcessor;
+use crate::matchengine::slfe::processor::limit::LimitOrderProcessor;
 use crate::matchengine::slfe::sharding::{OrderLocation, OrderTreeSharding};
 use crate::matchengine::slfe::status::SlfeStats;
 use crate::matchengine::tool::math::{
     atomic_to_f64, cal_ewma, cal_mid_price, cal_price_change, f64_to_atomic,
 };
 use crate::matchengine::tool::slfe::cal_total_quote_value_for_ordertree;
-use crate::matchengine::{MatchEngineError, MatchEvent, MatchResult};
+use crate::matchengine::{MatchEvent, MatchResult};
 use crate::order::{Order, OrderDirection};
 use crate::price::PriceLevel;
+use crate::types::{UnifiedError, UnifiedResult};
 use crate::{
     matchengine::MatchEngineConfig,
     price::{AskPrice, BidPrice, Price},
@@ -40,17 +45,17 @@ use crate::{
 /// * bids: Sharded order tree for buy orders (BidPrice), providing concurrent access
 /// * asks: Sharded order tree for sell orders (AskPrice), providing concurrent access  
 /// * tx/rx: Channel for broadcasting match events to subscribers
-/// * order_index: Fast concurrent mapping from order IDs to their locations in the books
+/// * order_location: Fast concurrent mapping from order IDs to their locations in the books
 /// * stats: Runtime statistics protected by read-write locks
 /// * config: Engine configuration parameters
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Slfe {
     pub bids: Arc<OrderTreeSharding<BidPrice>>,
     pub asks: Arc<OrderTreeSharding<AskPrice>>,
     pub tx: Sender<MatchEvent>,
     pub rx: Arc<Receiver<MatchEvent>>,
-    pub order_index: Arc<DashMap<String, OrderLocation>>,
+    pub order_location: Arc<DashMap<String, OrderLocation>>,
     pub stats: Arc<RwLock<SlfeStats>>,
     pub config: Arc<RwLock<MatchEngineConfig>>,
     // current price
@@ -59,9 +64,14 @@ pub struct Slfe {
     pub last_match_price: Arc<AtomicU64>,
     // mid price
     pub mid_price: Arc<AtomicU64>,
+    // iceberg order manager
+    pub iceberg: Arc<IcebergOrderManager>,
+    // day order handler
+    pub day_order_handler: Arc<DAYOrderProcessor>,
 }
 
 impl Slfe {
+    /// create a new slfe match engine
     pub fn new(config: Option<MatchEngineConfig>) -> Self {
         let (tx, rx) = unbounded();
         let config = config.unwrap();
@@ -70,7 +80,9 @@ impl Slfe {
             asks: Arc::new(OrderTreeSharding::new(config.shard_count)),
             tx: tx,
             rx: Arc::new(rx),
-            order_index: Arc::new(DashMap::new()),
+            // The mapping table of order positions in shards
+            // key: order id, value: order location
+            order_location: Arc::new(DashMap::new()),
             stats: Arc::new(RwLock::new(SlfeStats::new())),
             config: Arc::new(RwLock::new(config)),
             // current price
@@ -79,24 +91,53 @@ impl Slfe {
             last_match_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
             // mid price
             mid_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
+            // iceberg order manager
+            iceberg: Arc::new(IcebergOrderManager::new()),
+            // day order handler
+            day_order_handler: Arc::new(DAYOrderProcessor::new()),
         }
     }
+
+    /// start engine
     pub async fn start_engine(self: Arc<Self>) {
         let mut tasks = Vec::new();
+        // ---------------------- core event ----------------------
         let event_matcher = self.clone();
         let event_handle = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
             runtime.block_on(event_matcher.start_event_engine())
         });
+        // add event handle
         tasks.push(event_handle);
-        let depth_matcher = self.clone();
+        // -------------------- iceberg manager -------------------
+        let iceberg_self_arc_clone = self.clone();
+        let iceberg_arc_clone = self.iceberg.clone();
+        let iceberg_manager = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(iceberg_arc_clone.start_manager(iceberg_self_arc_clone))
+        });
+        // add iceberg handle
+        tasks.push(iceberg_manager);
+        // -------------------- day order handler -------------------
+        let day_order_self_arc_clone = self.clone();
         tasks.push(tokio::spawn(async move {
-            depth_matcher.start_depth_monitor().await;
+            day_order_self_arc_clone
+                .clone()
+                .day_order_handler
+                .start_expiry_cleanup(day_order_self_arc_clone)
+                .await
+        }));
+        // --------------------- depth monitor ---------------------
+        let depth_self_arc_clone = self.clone();
+        // add depth monitor
+        tasks.push(tokio::spawn(async move {
+            depth_self_arc_clone.start_depth_monitor().await;
         }));
         for task in tasks {
             join!(task);
         }
     }
+
     /// start event engine
     async fn start_event_engine(self: Arc<Self>) {
         let mut event_batch = Vec::<MatchEvent>::with_capacity(self.config.read().batch_size);
@@ -125,6 +166,7 @@ impl Slfe {
             tokio::time::sleep(Duration::from_micros(10)).await;
         }
     }
+
     async fn start_depth_monitor(self: Arc<Self>) {
         let mut last_adjustment = Instant::now();
         let adjustment_interval = Duration::from_secs(2);
@@ -145,12 +187,13 @@ impl Slfe {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
+
     async fn try_continuous_match(&self) {
         let mut match_occurred = true;
         let mut total_matched = 0;
         while match_occurred {
             match_occurred = false;
-            if let Some(results) = OrderProcessor::handle_limit_order(self).await {
+            if let Some(results) = LimitOrderProcessor::handle(self).await {
                 if !results.is_empty() {
                     match_occurred = true;
                     total_matched += results.len();
@@ -197,9 +240,10 @@ impl Slfe {
             }
         }
     }
+
     /// Handle order cancellation events.
     async fn handle_cancellation(self: Arc<Self>, order_id: &str) {
-        if let Some(location) = self.order_index.get(order_id) {
+        if let Some(location) = self.order_location.get(order_id) {
             match location.direction {
                 OrderDirection::Buy => {
                     self.bids.remove_order(order_id, location.shard_id);
@@ -209,9 +253,10 @@ impl Slfe {
                 }
                 OrderDirection::None => (),
             }
-            self.order_index.remove(order_id);
+            self.order_location.remove(order_id);
         }
     }
+
     /// Used to batch process all events in a blocked thread.
     async fn handle_event_batch(self: Arc<Self>, events: &[MatchEvent]) {
         let start_time = Instant::now();
@@ -220,10 +265,10 @@ impl Slfe {
         let mut total_quantity = 0.0;
         for event in events {
             match event {
-                MatchEvent::NewOrder(_order) => {
+                MatchEvent::NewLimitOrder => {
                     processed += 1;
                     let self_clone = self.clone();
-                    if let Some(results) = OrderProcessor::handle_limit_order(&self).await {
+                    if let Some(results) = LimitOrderProcessor::handle(&self).await {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
                         let self_clone = self.clone();
@@ -236,7 +281,7 @@ impl Slfe {
                     self_clone.handle_cancellation(order_id).await;
                 }
                 MatchEvent::ImmediateMatch => {
-                    if let Some(results) = OrderProcessor::handle_limit_order(&self).await {
+                    if let Some(results) = LimitOrderProcessor::handle(&self).await {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
                         let self_clone = self.clone();
@@ -257,6 +302,7 @@ impl Slfe {
         let self_clone = self.clone();
         self_clone.update_stats(processed, matched, total_quantity, start_time.elapsed());
     }
+
     /// update stats
     fn update_stats(&self, processed: usize, matched: usize, quantity: f64, latency: Duration) {
         let mut stats = self.stats.write();
@@ -291,6 +337,7 @@ impl Slfe {
         }
         stats.last_update = Instant::now();
     }
+
     /// auto tuning engine performance configuration.
     async fn auto_tuning(self: Arc<Self>, depth: &MarketDepth) {
         if (self.config.read().enable_auto_tuning) {
@@ -318,6 +365,7 @@ impl Slfe {
             }
         }
     }
+
     pub fn calculate_spread(self: Arc<Self>) -> f64 {
         if let (Some(best_bid), Some(best_ask)) =
             (self.bids.get_best_price(), self.asks.get_best_price())
@@ -326,44 +374,6 @@ impl Slfe {
         } else {
             0.0
         }
-    }
-    /// add order
-    pub fn add_order(&self, order: Order) -> Result<(), MatchEngineError> {
-        if order.price <= 0.0 {
-            return Err(MatchEngineError::AddOrderError(
-                "Price must be greater than 0".to_string(),
-            ));
-        }
-        if order.quantity <= 0.0 {
-            return Err(MatchEngineError::AddOrderError(
-                "The quantity must be greater than 0".to_string(),
-            ));
-        }
-        if order.id.is_empty() {
-            return Err(MatchEngineError::AddOrderError(
-                "Order ID cannot be empty".to_string(),
-            ));
-        }
-        let start_time = Instant::now();
-        let location = match order.direction {
-            OrderDirection::Buy => self.bids.add_order(order.clone()),
-            OrderDirection::Sell => self.asks.add_order(order.clone()),
-            OrderDirection::None => {
-                return Err(MatchEngineError::AddOrderError(format!(
-                    "Order Direction ERROR"
-                )));
-            }
-        };
-        self.order_index.insert(order.id.clone(), location);
-        if let Err(e) = self.tx.send(MatchEvent::NewOrder(order)) {
-            return Err(MatchEngineError::AddOrderError(format!(
-                "Event queue full: {}",
-                e
-            )));
-        }
-        let self_clone = self.clone();
-        self_clone.update_stats(1, 0, 0.0, start_time.elapsed());
-        Ok(())
     }
 
     /// Get a map of all price tiers relative to order quantities.
@@ -435,6 +445,7 @@ impl Slfe {
             OrderDirection::None => 0.0,
         }
     }
+
     /// Get the total value of quote units in a specified trading direction.
     /// # Return
     /// * f64: total quote unit value
@@ -501,6 +512,7 @@ impl Slfe {
             total_ask_orders: self.asks.get_total_order_count(),
         }
     }
+
     /// get current price
     pub fn get_current_price(&self) -> f64 {
         atomic_to_f64(self.current_price.load(Ordering::Relaxed))
@@ -516,7 +528,7 @@ impl Slfe {
         atomic_to_f64(self.mid_price.load(Ordering::Relaxed))
     }
 
-    // calculate mid price
+    /// calculate mid price
     fn calculate_mid_price(&self) -> Option<f64> {
         if let (Some(best_bid), Some(best_ask)) =
             (self.bids.get_best_price(), self.asks.get_best_price())
@@ -526,15 +538,21 @@ impl Slfe {
             None
         }
     }
+
     /// update current price
-    pub fn update_current_price(&self, price: f64) -> Result<(), MatchEngineError> {
+    pub fn update_current_price(&self, price: f64) -> Result<(), UnifiedError> {
         if price <= 0.0 {
-            return Err(MatchEngineError::AddOrderError(
+            return Err(UnifiedError::UpdateCurrentPrice(
                 "Price must be greater than 0".to_string(),
             ));
         }
         self.current_price
             .store(f64_to_atomic(price), Ordering::Relaxed);
         Ok(())
+    }
+
+    /// add order
+    pub async fn add_order(&self, order: Order) -> UnifiedResult<String> {
+        OrderProcessor::handle_new_order(self, order).await
     }
 }

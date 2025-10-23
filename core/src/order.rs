@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    matchengine::slfe::iceberg_manager::IcebergOrderManager,
+    matchengine::slfe::iceberg_manager::{IcebergOrderEvent, IcebergOrderManager},
     price::Price,
     types::{UnifiedError, UnifiedResult},
 };
@@ -92,6 +92,8 @@ pub enum OrderType {
     FOK,
     IOC,
     Iceberg,
+    DAY,
+    GTC,
 }
 
 impl OrderType {}
@@ -174,7 +176,12 @@ impl Order {
     /// When the order is a sub-order of an iceberg order and the order is fully executed, the iceberg order will be notified.
     /// Normally, this function needs to be executed only after the limit orders of the child orders of the iceberg order are processed.
     pub fn notify_iceberg_manager(&self, iceberg_manager: &IcebergOrderManager) {
-        iceberg_manager.notify_tier_completed(&self.id, self.filled);
+        iceberg_manager
+            .event_tx
+            .send(IcebergOrderEvent::TierFilled {
+                display_order_id: self.id.clone(),
+                filled_quantity: self.filled,
+            });
     }
 
     /// Execute the transaction for this order (modify the relevant balance fields)

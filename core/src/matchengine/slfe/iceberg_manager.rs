@@ -203,7 +203,7 @@ impl IcebergOrderManager {
     fn event_worker(self: Arc<Self>, engine: Arc<Slfe>) {
         let mut event_batch = Vec::<IcebergOrderEvent>::with_capacity(100);
         let mut last_cleanup_time = Instant::now();
-        let cleanup_interval = Duration::from_secs(30); // 30秒清理一次
+        let cleanup_interval = Duration::from_secs(30); // Clean up every 30 seconds
         while self.is_running.load(Ordering::Relaxed) {
             while let Ok(event) = self.event_rx.try_recv() {
                 event_batch.push(event);
@@ -279,7 +279,7 @@ impl IcebergOrderManager {
         config: IcebergOrderConfig,
         cache_pool: &Arc<IcebergCachePool>,
         engine: &Arc<Slfe>,
-    ) -> UnifiedResult {
+    ) -> UnifiedResult<String> {
         if order.order_type != OrderType::Iceberg {
             return Err(UnifiedError::IcebergOrderError(
                 "Order Type Error".to_string(),
@@ -320,7 +320,7 @@ impl IcebergOrderManager {
         tier_index: usize,
         cache_pool: &Arc<IcebergCachePool>,
         slfe: &Arc<Slfe>,
-    ) -> UnifiedResult {
+    ) -> UnifiedResult<String> {
         let state = match cache_pool.get_iceberg_order(iceberg_order_id) {
             Some(state) => state,
             None => {
@@ -561,7 +561,7 @@ impl IcebergOrderManager {
         order_id: &str,
         cache_pool: &Arc<IcebergCachePool>,
         slfe: &Arc<Slfe>,
-    ) -> UnifiedResult {
+    ) -> UnifiedResult<String> {
         let state = match cache_pool.get_iceberg_order(order_id) {
             Some(state) => state,
             None => {
