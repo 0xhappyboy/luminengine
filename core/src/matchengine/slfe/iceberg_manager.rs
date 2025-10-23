@@ -66,11 +66,9 @@ pub enum IcebergOrderEvent {
     Create {
         order: Order,
         config: IcebergOrderConfig,
-        reply: Sender<UnifiedResult>,
     },
     Cancel {
         order_id: String,
-        reply: Sender<UnifiedResult>,
     },
     TierFilled {
         display_order_id: String,
@@ -248,18 +246,11 @@ impl IcebergOrderManager {
         engine: &Arc<Slfe>,
     ) {
         match event {
-            IcebergOrderEvent::Create {
-                order,
-                config,
-                reply,
-            } => {
-                let result =
-                    Self::handle_create_order(order.clone(), config.clone(), cache_pool, engine);
-                let _ = reply.send(result);
+            IcebergOrderEvent::Create { order, config } => {
+                Self::handle_create_order(order.clone(), config.clone(), cache_pool, engine);
             }
-            IcebergOrderEvent::Cancel { order_id, reply } => {
-                let result = Self::handle_cancel_order(order_id, cache_pool, engine);
-                let _ = reply.send(result);
+            IcebergOrderEvent::Cancel { order_id } => {
+                Self::handle_cancel_order(order_id, cache_pool, engine);
             }
             IcebergOrderEvent::TierFilled {
                 display_order_id,
