@@ -6,7 +6,11 @@ use std::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::price::Price;
+use crate::{
+    matchengine::slfe::iceberg_manager::IcebergOrderManager,
+    price::Price,
+    types::{UnifiedError, UnifiedResult},
+};
 /// order direction enumeration
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum OrderDirection {
@@ -78,6 +82,8 @@ where
     pub fn cancel(&mut self, order: Order) {}
 }
 
+/// order type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderType {
     Limit,
     Market,
@@ -115,6 +121,7 @@ pub struct Order {
     pub crt_time: String,
     pub status: OrderStatus,
     pub expiry: Option<Instant>,
+    pub order_type: OrderType,
     pub ex: Option<String>,
 }
 
@@ -127,6 +134,7 @@ impl Order {
         status: OrderStatus,
         expiry: Option<Instant>,
         order_direction: OrderDirection,
+        order_type: OrderType,
     ) -> Self {
         Self {
             id: id,
@@ -140,8 +148,11 @@ impl Order {
             expiry: expiry,
             crt_time: Utc::now().to_string(),
             ex: None,
+            order_type: order_type,
         }
     }
+
+    /// Determine whether the order can be traded.
     pub fn can_trade(&self) -> bool {
         if self.remaining <= 0.0 {
             return false;
@@ -159,6 +170,14 @@ impl Order {
         true
     }
 
+    /// notify iceberg manager
+    /// When the order is a sub-order of an iceberg order and the order is fully executed, the iceberg order will be notified.
+    /// Normally, this function needs to be executed only after the limit orders of the child orders of the iceberg order are processed.
+    pub fn notify_iceberg_manager(&self, iceberg_manager: &IcebergOrderManager) {
+        iceberg_manager.notify_tier_completed(&self.id, self.filled);
+    }
+
+    /// Execute the transaction for this order (modify the relevant balance fields)
     pub fn execute_trade(&mut self, quantity: f64) {
         self.remaining -= quantity;
         self.remaining = self.remaining.max(0.0);
@@ -181,7 +200,28 @@ impl Order {
             ex: None,
             status: OrderStatus::Pending,
             expiry: Some(Instant::now()),
+            order_type: OrderType::Limit,
         }
+    }
+
+    /// order Legality verification
+    pub fn verify(&self) -> UnifiedResult {
+        if self.price <= 0.0 {
+            return Err(UnifiedError::OrderVerifyError(
+                "Price must be greater than 0".to_string(),
+            ));
+        }
+        if self.quantity <= 0.0 {
+            return Err(UnifiedError::OrderVerifyError(
+                "The quantity must be greater than 0".to_string(),
+            ));
+        }
+        if self.id.is_empty() {
+            return Err(UnifiedError::OrderVerifyError(
+                "Order ID cannot be empty".to_string(),
+            ));
+        }
+        Ok("verifyed".to_string())
     }
 }
 
@@ -199,6 +239,7 @@ impl Default for Order {
             ex: None,
             status: OrderStatus::Pending,
             expiry: Some(Instant::now()),
+            order_type: OrderType::Limit,
         }
     }
 }
