@@ -1,5 +1,19 @@
 use crate::order::Order;
 
+/// Unified result type
+pub type UnifiedResult = Result<String, UnifiedError>;
+
+/// Unified error type
+#[derive(Debug, Clone)]
+pub enum UnifiedError {
+    AddOrderError(String),
+    AddLimitOrderError(String),
+    OrderVerifyError(String),
+    IcebergOrderError(String),
+    UpdateCurrentPrice(String),
+    Error(String),
+}
+
 /// push order event
 pub type PushOrderEvent = fn(order: Order);
 
