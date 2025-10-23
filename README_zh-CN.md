@@ -74,6 +74,10 @@
 \text{AvgPrice} = \frac{\sum_{i=1}^{k} (p_i \times q_i)}{\sum_{i=1}^{k} q_i}
 ```
 
+### 冰山订单
+
+![iceberg order manager](assets/architecture/iceberg_manager_zhCN.png)
+
 ## 资源
 
 - <a href="https://github.com/0xhappyboy/luminengine/tree/main/builder/rpc/protos">RPC Proto 文件</a>

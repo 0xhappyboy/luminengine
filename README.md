@@ -74,6 +74,10 @@ A high-performance financial quantitative trading order book matching framework.
 \text{AvgPrice} = \frac{\sum_{i=1}^{k} (p_i \times q_i)}{\sum_{i=1}^{k} q_i}
 ```
 
+### Iceberg Order
+
+![iceberg order manager](assets/architecture/iceberg_manager_EN.png)
+
 ## Resource
 
 - <a href="https://github.com/0xhappyboy/luminengine/tree/main/builder/rpc/protos">RPC Proto File</a>
