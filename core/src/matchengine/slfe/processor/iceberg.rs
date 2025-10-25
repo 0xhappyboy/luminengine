@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use crate::{
     matchengine::slfe::{
         Slfe,
-        iceberg_manager::{IcebergOrderConfig, IcebergOrderEvent},
+        manager::iceberg::{IcebergOrderConfig, IcebergOrderEvent},
     },
     order::Order,
     types::UnifiedResult,
@@ -10,11 +12,13 @@ use crate::{
 pub struct IcebergOrderProcessor;
 
 impl IcebergOrderProcessor {
-    pub async fn handle(slfe: &Slfe, iceberg_order: Order) -> UnifiedResult<String> {
-        slfe.iceberg.event_tx.send(IcebergOrderEvent::Create {
-            order: iceberg_order,
-            config: IcebergOrderConfig::default(),
-        });
+    pub async fn handle(slfe: Arc<Slfe>, iceberg_order: Order) -> UnifiedResult<String> {
+        slfe.iceberg_manager
+            .event_tx
+            .send(IcebergOrderEvent::Create {
+                order: iceberg_order,
+                config: IcebergOrderConfig::default(),
+            });
         Ok("".to_string())
     }
 }

@@ -1,15 +1,44 @@
-use std::{collections::VecDeque, time::Instant};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use crate::{
-    matchengine::{MatchResult, slfe::Slfe},
-    order::Order,
+    matchengine::{MatchEvent, MatchResult, slfe::Slfe},
+    order::{Order, OrderDirection},
     price::{AskPrice, BidPrice},
+    types::{UnifiedError, UnifiedResult},
 };
 
 pub struct LimitOrderProcessor;
 
 impl LimitOrderProcessor {
+    /// Added unified entry for limit orders to the order book.
+    pub async fn add(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
+        let start_time = Instant::now();
+        let location = match order.direction {
+            OrderDirection::Buy => slfe.bids.add_order(order.clone()),
+            OrderDirection::Sell => slfe.asks.add_order(order.clone()),
+            OrderDirection::None => {
+                return Err(UnifiedError::AddLimitOrderError(format!(
+                    "Order Direction ERROR"
+                )));
+            }
+        };
+        // record the location of the latest order in the shard
+        slfe.order_location.insert(order.id.clone(), location);
+        // send event
+        if let Err(e) = slfe.event_manager.send_event(MatchEvent::NewLimitOrder) {
+            return Err(UnifiedError::AddLimitOrderError(format!(
+                "Event queue full: {:?}",
+                e
+            )));
+        }
+        // update status
+        slfe.status_manager
+            .update(slfe.as_ref(), 1, 0, 0.0, start_time.elapsed());
+        return Ok("".to_string());
+    }
+
     /// handle limit order
+    /// Used in event managers.
     pub async fn handle(slfe: &Slfe) -> Option<Vec<MatchResult>> {
         let best_bid = slfe.bids.get_best_price();
         let best_ask = slfe.asks.get_best_price();
@@ -28,9 +57,14 @@ impl LimitOrderProcessor {
         let mut all_results = Vec::new();
         for bid_shard_id in 0..slfe.config.read().shard_count {
             for ask_shard_id in 0..slfe.config.read().shard_count {
-                let results =
-                    Self::match_shard_pair(slfe, bid_shard_id, ask_shard_id, bid_price, ask_price)
-                        .await;
+                let results = Self::match_shard_pair(
+                    slfe.clone(),
+                    bid_shard_id,
+                    ask_shard_id,
+                    bid_price,
+                    ask_price,
+                )
+                .await;
                 all_results.extend(results);
             }
         }
@@ -56,7 +90,8 @@ impl LimitOrderProcessor {
         };
         let original_bid_count = bid_orders.len();
         let original_ask_count = ask_orders.len();
-        let results = Self::match_order_queues(slfe, &mut bid_orders, &mut ask_orders).await;
+        let results =
+            Self::match_order_queues(slfe.clone(), &mut bid_orders, &mut ask_orders).await;
         if results.is_empty() {
             return results;
         }
@@ -113,24 +148,24 @@ impl LimitOrderProcessor {
                 }
                 if bid_order.remaining <= 0.0 {
                     // notify iceberg manager
-                    bid_order.notify_iceberg_manager(&slfe.iceberg);
-                    bid_order.notify_gtc_manager(&slfe.gtc);
+                    bid_order.notify_iceberg_manager(&slfe.iceberg_manager);
+                    bid_order.notify_gtc_manager(&slfe.gtc_manager);
                     // complete deal
                     bid_orders.remove(bid_index);
                 } else {
                     // Partial deal
-                    bid_order.notify_gtc_manager(&slfe.gtc);
+                    bid_order.notify_gtc_manager(&slfe.gtc_manager);
                     bid_index += 1;
                 }
                 if ask_order.remaining <= 0.0 {
                     // notify iceberg manager
-                    ask_order.notify_iceberg_manager(&slfe.iceberg);
-                    ask_order.notify_gtc_manager(&slfe.gtc);
+                    ask_order.notify_iceberg_manager(&slfe.iceberg_manager);
+                    ask_order.notify_gtc_manager(&slfe.gtc_manager);
                     // complete deal
                     ask_orders.remove(ask_index);
                 } else {
                     // Partial deal
-                    ask_order.notify_gtc_manager(&slfe.gtc);
+                    ask_order.notify_gtc_manager(&slfe.gtc_manager);
                     ask_index += 1;
                 }
             } else {

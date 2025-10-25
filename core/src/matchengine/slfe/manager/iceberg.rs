@@ -14,7 +14,7 @@ use crossbeam::channel::{Receiver, Sender, bounded};
 use dashmap::DashMap;
 
 use crate::{
-    matchengine::slfe::Slfe,
+    matchengine::slfe::{Slfe, processor::OrderProcessor},
     order::{Order, OrderDirection, OrderStatus, OrderType},
     types::{UnifiedError, UnifiedResult},
 };
@@ -191,16 +191,9 @@ impl IcebergOrderManager {
             cache_pool: Arc::new(IcebergCachePool::new()),
         }
     }
-
-    pub async fn start_manager(self: Arc<Self>, engine: Arc<Slfe>) {
+ 
+   pub async fn start_iceberg_manager(self: Arc<Self>, engine: Arc<Slfe>) {
         self.is_running.store(true, Ordering::Relaxed);
-        let manager = self.clone();
-        std::thread::spawn(move || {
-            manager.event_worker(engine);
-        });
-    }
-
-    fn event_worker(self: Arc<Self>, engine: Arc<Slfe>) {
         let mut event_batch = Vec::<IcebergOrderEvent>::with_capacity(100);
         let mut last_cleanup_time = Instant::now();
         let cleanup_interval = Duration::from_secs(30); // Clean up every 30 seconds
@@ -383,11 +376,11 @@ impl IcebergOrderManager {
             ex: None,
         };
 
-        let engine_clone = slfe.clone();
+        let slfe_clone = slfe.clone();
         let order_clone = display_order.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            match rt.block_on(engine_clone.add_order(order_clone)) {
+            match rt.block_on(OrderProcessor::handle_new_order(slfe_clone, order_clone)) {
                 Ok(s) => {
                     // .....
                 }
@@ -560,7 +553,7 @@ impl IcebergOrderManager {
     fn handle_cancel_order(
         order_id: &str,
         cache_pool: &Arc<IcebergCachePool>,
-        slfe: &Arc<Slfe>,
+        slfe: &Slfe,
     ) -> UnifiedResult<String> {
         let state = match cache_pool.get_iceberg_order(order_id) {
             Some(state) => state,
@@ -574,7 +567,7 @@ impl IcebergOrderManager {
             if let Some(display_id) = &tier.display_order_id {
                 if tier.is_active && !tier.is_completed {
                     // cancel order
-                    slfe.clone().handle_cancellation(&display_id);
+                    OrderProcessor::handle_cancel_order(slfe, &display_id);
                 }
             }
         }

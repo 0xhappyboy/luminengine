@@ -13,7 +13,7 @@ const CLEANUP_TASK_INTERVAL: u64 = 30;
 pub struct ExpiredOrderManager;
 
 impl ExpiredOrderManager {
-    pub async fn start_expiry_cleanup(slfe: Arc<Slfe>) {
+    pub async fn start_expiry_order_manager(slfe: Arc<Slfe>) {
         let mut interval = interval(Duration::from_secs(CLEANUP_TASK_INTERVAL));
         loop {
             interval.tick().await;

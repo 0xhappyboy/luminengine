@@ -35,6 +35,7 @@ pub struct GTCOrderManager {
 }
 
 impl GTCOrderManager {
+    
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         Self {
@@ -119,7 +120,7 @@ impl GTCOrderManager {
         }
     }
 
-    pub async fn start_event_loop(&self) {
+    pub async fn start_gtc_manager(&self) {
         let manager = Arc::new(self.clone());
         std::thread::spawn(move || {
             manager.process_events();

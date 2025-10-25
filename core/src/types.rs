@@ -8,10 +8,13 @@ pub type UnifiedResult<T> = Result<T, UnifiedError>;
 pub enum UnifiedError {
     AddOrderError(String),
     AddLimitOrderError(String),
+    OrderError(String),
     OrderVerifyError(String),
     IcebergOrderError(String),
     UpdateCurrentPrice(String),
+    EventSendError(String),
     Error(String),
+    InvalidOrder(String)
 }
 
 /// push order event

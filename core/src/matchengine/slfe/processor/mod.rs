@@ -8,7 +8,7 @@ pub mod market;
 pub mod soptlimit;
 pub mod stop;
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use crate::{
     matchengine::{
@@ -17,9 +17,8 @@ use crate::{
             Slfe,
             processor::{
                 day::DAYOrderProcessor, fok::FOKOrderProcessor, gtc::GTCOrderProcessor,
-                iceberg::IcebergOrderProcessor, ioc::IOCOrderProcessor,
-                market::MarketOrderProcessor, soptlimit::StopLimitOrderProcessor,
-                stop::StopOrderProcessor,
+                iceberg::IcebergOrderProcessor, ioc::IOCOrderProcessor, limit::LimitOrderProcessor,
+                market::MarketOrderProcessor,
             },
         },
         tool,
@@ -32,7 +31,7 @@ pub struct OrderProcessor;
 
 impl OrderProcessor {
     /// a unified entry point for new orders.
-    pub async fn handle_new_order(slfe: &Slfe, order: Order) -> UnifiedResult<String> {
+    pub async fn handle_new_order(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
         // verify order
         let order_verify = order.verify();
         if order_verify.is_err() {
@@ -41,57 +40,63 @@ impl OrderProcessor {
         // handle different types of orders
         match order.order_type {
             crate::order::OrderType::Limit => {
-                let start_time = Instant::now();
-                let location = match order.direction {
-                    OrderDirection::Buy => slfe.bids.add_order(order.clone()),
-                    OrderDirection::Sell => slfe.asks.add_order(order.clone()),
-                    OrderDirection::None => {
-                        return Err(UnifiedError::AddLimitOrderError(format!(
-                            "Order Direction ERROR"
-                        )));
-                    }
-                };
-                slfe.order_location.insert(order.id.clone(), location);
-                // send event
-                if let Err(e) = slfe.tx.send(MatchEvent::NewLimitOrder) {
-                    return Err(UnifiedError::AddLimitOrderError(format!(
-                        "Event queue full: {}",
-                        e
-                    )));
-                }
-                // update status
-                slfe.update_stats(1, 0, 0.0, start_time.elapsed());
+                let slfe_arc_clone = slfe.clone();
+                LimitOrderProcessor::add(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::Market => {
-                MarketOrderProcessor::handle_market_order(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                MarketOrderProcessor::handle(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::Stop => {
-                StopOrderProcessor::handle_stop_order(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                todo!();
                 return Ok("".to_string());
             }
             crate::order::OrderType::StopLimit => {
-                StopLimitOrderProcessor::handle_stop_limit_order(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                todo!();
                 return Ok("".to_string());
             }
             crate::order::OrderType::FOK => {
-                FOKOrderProcessor::handle(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                FOKOrderProcessor::handle(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::IOC => {
-                IOCOrderProcessor::handle_ioc_order(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                IOCOrderProcessor::handle_ioc_order(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::Iceberg => {
-                IcebergOrderProcessor::handle(slfe, order).await;
+                let slfe_arc_clone = slfe.clone();
+                IcebergOrderProcessor::handle(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::DAY => {
-                DAYOrderProcessor::handle(slfe, order, tool::expiry::expiry_today_end()).await;
+                let slfe_arc_clone = slfe.clone();
+                DAYOrderProcessor::handle(slfe_arc_clone, order, tool::expiry::expiry_today_end())
+                    .await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::GTC => GTCOrderProcessor::handle(slfe, order).await,
+        }
+    }
+
+    /// Unified order cancellation entry
+    pub async fn handle_cancel_order(slfe: &Slfe, order_id: &str) {
+        if let Some(location) = slfe.order_location.get(order_id) {
+            match location.direction {
+                OrderDirection::Buy => {
+                    slfe.bids.remove_order(order_id, location.shard_id);
+                }
+                OrderDirection::Sell => {
+                    slfe.asks.remove_order(order_id, location.shard_id);
+                }
+                OrderDirection::None => (),
+            }
+            slfe.order_location.remove(order_id);
         }
     }
 }

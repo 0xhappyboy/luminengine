@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use crate::{
     matchengine::{MatchResult, slfe::Slfe},
@@ -9,9 +9,8 @@ use crate::{
 pub struct MarketOrderProcessor;
 
 impl MarketOrderProcessor {
-    
     /// handle market order
-    pub async fn handle_market_order(slfe: &Slfe, market_order: Order) -> Vec<MatchResult> {
+    pub async fn handle(slfe: Arc<Slfe>, market_order: Order) -> Vec<MatchResult> {
         match market_order.direction {
             OrderDirection::Buy => Self::market_order_match_buy_order(slfe, market_order).await,
             OrderDirection::Sell => Self::market_order_match_sell_order(slfe, market_order).await,
@@ -23,7 +22,7 @@ impl MarketOrderProcessor {
 
     /// match buy orders.
     async fn market_order_match_buy_order(
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
         mut market_order: Order,
     ) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
@@ -34,7 +33,7 @@ impl MarketOrderProcessor {
                 break;
             }
             let results = Self::market_order_match_price_level(
-                slfe,
+                slfe.clone(),
                 &mut market_order,
                 &ask_price,
                 remaining_quantity,
@@ -60,7 +59,7 @@ impl MarketOrderProcessor {
 
     /// match sell order
     async fn market_order_match_sell_order(
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
         mut market_order: Order,
     ) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
@@ -71,7 +70,7 @@ impl MarketOrderProcessor {
                 break;
             }
             let results = Self::market_order_match_price_level(
-                slfe,
+                slfe.clone(),
                 &mut market_order,
                 &bid_price,
                 remaining_quantity,
@@ -97,7 +96,7 @@ impl MarketOrderProcessor {
 
     /// Matches orders based on specified price levels.
     async fn market_order_match_price_level(
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
         market_order: &mut Order,
         price: &impl Price,
         remaining_quantity: f64,
@@ -110,7 +109,7 @@ impl MarketOrderProcessor {
                 break;
             }
             let results = Self::market_order_match_sharding(
-                slfe,
+                slfe.clone(),
                 market_order,
                 price.to_f64(),
                 shard_id,
@@ -129,7 +128,7 @@ impl MarketOrderProcessor {
 
     /// match sharding
     async fn market_order_match_sharding(
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
         market_order: &mut Order,
         price: f64,
         shard_id: usize,

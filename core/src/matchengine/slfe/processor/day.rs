@@ -5,7 +5,13 @@ use std::time::Instant;
 use tokio::time::{Duration, interval};
 
 use crate::{
-    matchengine::{MatchEvent, slfe::Slfe},
+    matchengine::{
+        MatchEvent,
+        slfe::{
+            Slfe,
+            processor::{OrderProcessor, limit::LimitOrderProcessor},
+        },
+    },
     order::{Order, OrderDirection, OrderType},
     types::{UnifiedError, UnifiedResult},
 };
@@ -17,26 +23,14 @@ pub struct DAYOrderProcessor;
 
 impl DAYOrderProcessor {
     pub async fn handle(
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
         day_order: Order,
         trading_day_end: Instant,
     ) -> UnifiedResult<String> {
         let mut order = day_order.clone();
-        order.order_type = OrderType::DAY;
+        order.order_type = OrderType::Limit;
         order.expiry = Some(trading_day_end);
-        match slfe.add_order(order.clone()).await {
-            Ok(_) => {
-                if let Some(location) = slfe.order_location.get(&order.id) {}
-                if let Err(e) = slfe.tx.send(MatchEvent::NewLimitOrder) {
-                    return Err(UnifiedError::AddLimitOrderError(format!(
-                        "Event queue full: {}",
-                        e
-                    )));
-                }
-                slfe.update_stats(1, 0, 0.0, Instant::now().elapsed());
-                Ok("".to_string())
-            }
-            Err(e) => Err(e),
-        }
+        LimitOrderProcessor::add(slfe, day_order);
+        Ok("".to_string())
     }
 }
