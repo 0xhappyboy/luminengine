@@ -24,51 +24,17 @@
 
 ## 支持订单类型
 
-<div class="markdown-accessiblity-table" style="display: block; width: 100% !important; max-width: none !important;">
-<table width="100%">
-  <tr>
-    <th width="50%">Order Type</th>
-    <th width="50%">Status</th>
-  </tr>
-  <tr>
-    <td>限价单</td>
-    <td>✅</td>
-  </tr>
-   <tr>
-    <td>市价单</td>
-    <td>✅</td>
-  </tr>
-    </tr>
-     <tr>
-    <td>GTC 订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>IOC 订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>FOK 订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>市价停止订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>限价停止订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>冰山订单</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>Day 订单</td>
-    <td>✅</td>
-  </tr>
-</table>
-</div>
+| **目录**         | **角色** |
+| :--------------- | :------- |
+| **限价单**       | ✅       |
+| **市价单**       | ✅       |
+| **GTC 订单**     | ✅       |
+| **IOC 订单**     | ✅       |
+| **FOK 订单**     | ✅       |
+| **市价停止订单** | ✅       |
+| **限价停止订单** | ✅       |
+| **冰山订单**     | ✅       |
+| **Day 订单**     | ✅       |
 
 ## 订单类型
 

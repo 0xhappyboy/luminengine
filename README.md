@@ -24,50 +24,17 @@ A high-performance financial quantitative trading order book matching framework.
 
 ## Supported Order Types
 
-<div class="markdown-accessiblity-table" style="display: block; width: 100% !important; max-width: none !important;">
-<table width="100%">
-  <tr>
-    <th width="50%">Order Type</th>
-    <th width="50%">Status</th>
-  </tr>
-  <tr>
-    <td>Limit Order</td>
-    <td>✅</td>
-  </tr>
-   <tr>
-    <td>Market Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>GTC Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>IOC Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>FOK Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>Stop Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>Stop Limie Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>Iceberg Order</td>
-    <td>✅</td>
-  </tr>
-     <tr>
-    <td>Day Order</td>
-    <td>✅</td>
-  </tr>
-</table>
-</div>
+| **目录**             | **角色** |
+| :------------------- | :------- |
+| **Limit Order**      | ✅       |
+| **Market Order**     | ✅       |
+| **GTC Order**        | ✅       |
+| **IOC Order**        | ✅       |
+| **FOK Order**        | ✅       |
+| **Stop Order**       | ✅       |
+| **Stop Limit Order** | ✅       |
+| **Iceberg Order**    | ✅       |
+| **Day Order**        | ✅       |
 
 ## Order Types
 
