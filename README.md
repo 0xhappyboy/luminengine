@@ -74,7 +74,7 @@ A high-performance financial quantitative trading order book matching framework.
 \text{AvgPrice} = \frac{\sum_{i=1}^{k} (p_i \times q_i)}{\sum_{i=1}^{k} q_i}
 ```
 
-### Iceberg Manager
+### Price Manager
 
 ![price manager](assets/architecture/price_manager_EN.png)
 
