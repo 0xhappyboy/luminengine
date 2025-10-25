@@ -20,11 +20,11 @@
     <th width="50%">Status</th>
   </tr>
   <tr>
-    <td>Limit 订单</td>
+    <td>限价单</td>
     <td>✅</td>
   </tr>
    <tr>
-    <td>Market 订单</td>
+    <td>市价单</td>
     <td>✅</td>
   </tr>
     </tr>
@@ -41,11 +41,11 @@
     <td>✅</td>
   </tr>
      <tr>
-    <td>Stop 订单</td>
+    <td>市价停止订单</td>
     <td>✅</td>
   </tr>
      <tr>
-    <td>Stop Limie 订单</td>
+    <td>限价停止订单</td>
     <td>✅</td>
   </tr>
      <tr>
