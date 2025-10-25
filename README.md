@@ -24,17 +24,17 @@ A high-performance financial quantitative trading order book matching framework.
 
 ## Supported Order Types
 
-| **目录**             | **角色** |
-| :------------------- | :------- |
-| **Limit Order**      | ✅       |
-| **Market Order**     | ✅       |
-| **GTC Order**        | ✅       |
-| **IOC Order**        | ✅       |
-| **FOK Order**        | ✅       |
-| **Stop Order**       | ✅       |
-| **Stop Limit Order** | ✅       |
-| **Iceberg Order**    | ✅       |
-| **Day Order**        | ✅       |
+| **OrderType**        | **progress** |
+| :------------------- | :----------- |
+| **Limit Order**      | ✅           |
+| **Market Order**     | ✅           |
+| **GTC Order**        | ✅           |
+| **IOC Order**        | ✅           |
+| **FOK Order**        | ✅           |
+| **Stop Order**       | ✅           |
+| **Stop Limit Order** | ✅           |
+| **Iceberg Order**    | ✅           |
+| **Day Order**        | ✅           |
 
 ## Order Types
 
