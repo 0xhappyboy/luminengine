@@ -20,11 +20,40 @@
     <th width="50%">Status</th>
   </tr>
   <tr>
-    <td>Limit Order</td>
+    <td>Limit 订单</td>
     <td>✅</td>
   </tr>
    <tr>
-    <td>Market Order</td>
+    <td>Market 订单</td>
+    <td>✅</td>
+  </tr>
+    </tr>
+     <tr>
+    <td>GTC 订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>IOC 订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>FOK 订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Stop 订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Stop Limie 订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>冰山订单</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Day 订单</td>
     <td>✅</td>
   </tr>
 </table>

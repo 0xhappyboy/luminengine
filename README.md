@@ -27,6 +27,34 @@ A high-performance financial quantitative trading order book matching framework.
     <td>Market Order</td>
     <td>✅</td>
   </tr>
+     <tr>
+    <td>GTC Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>IOC Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>FOK Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Stop Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Stop Limie Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Iceberg Order</td>
+    <td>✅</td>
+  </tr>
+     <tr>
+    <td>Day Order</td>
+    <td>✅</td>
+  </tr>
 </table>
 </div>
 
