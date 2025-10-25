@@ -20,6 +20,7 @@ use crate::matchengine::slfe::manager::event::EventManager;
 use crate::matchengine::slfe::manager::expired::ExpiredOrderManager;
 use crate::matchengine::slfe::manager::gtc::GTCOrderManager;
 use crate::matchengine::slfe::manager::iceberg::IcebergOrderManager;
+use crate::matchengine::slfe::manager::price::PriceManager;
 use crate::matchengine::slfe::manager::status::StatusManager;
 use crate::matchengine::slfe::sharding::{OrderLocation, OrderTreeSharding};
 use crate::matchengine::tool::math::{
@@ -70,6 +71,8 @@ pub struct Slfe {
     pub event_manager: Arc<EventManager>,
     // status manager
     pub status_manager: Arc<StatusManager>,
+    // price manager
+    pub price_manager: Arc<PriceManager>,
 }
 
 impl Slfe {
@@ -97,11 +100,13 @@ impl Slfe {
             event_manager: Arc::new(EventManager::new()),
             // status manager
             status_manager: Arc::new(StatusManager::new()),
+            // price manager
+            price_manager: Arc::new(PriceManager::new()),
         }
     }
 
     /// start engine
-    pub async fn start_engine(self: Arc<Self>) {
+    pub async fn start_engine(self: Arc<Self>) -> UnifiedResult<String> {
         let mut tasks = Vec::new();
         // ---------------------- core event ----------------------
         let event_manager_slfe_arc_clone = Arc::clone(&self);
@@ -131,6 +136,60 @@ impl Slfe {
         });
         // add gtc manager
         tasks.push(gtc_manager);
+        // -------------------- price manager -------------------
+        // price listener
+        let price_listener_tx = self.price_manager.tx.clone();
+        let price_listener_slfe_arc_clone = self.clone();
+        let price_listener_running_arc_clone = self.price_manager.is_running.clone();
+        let handle_price_listener = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(PriceManager::price_listener_task(
+                price_listener_slfe_arc_clone,
+                price_listener_tx,
+                price_listener_running_arc_clone,
+            ));
+        });
+        // handle stop
+        let stop_rx = self.price_manager.rx.clone();
+        let sopt_slfe_arc_clone = self.clone();
+        let sopt_running_arc_clone = self.price_manager.is_running.clone();
+        // Market-filled orders
+        let stop_orders = Arc::clone(&self.price_manager.stop_orders);
+        let buy_stop_orders = Arc::clone(&self.price_manager.buy_stop_orders);
+        let sell_stop_orders = Arc::clone(&self.price_manager.sell_stop_orders);
+        let handle_stop = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(PriceManager::handle_stop_order(
+                stop_orders,
+                buy_stop_orders,
+                sell_stop_orders,
+                stop_rx,
+                sopt_slfe_arc_clone,
+                sopt_running_arc_clone,
+            ));
+        });
+        // handle stop limit
+        let stop_limit_rx = self.price_manager.rx.clone();
+        let sopt_limit_slfe_arc_clone = self.clone();
+        let sopt_limit_running_arc_clone = self.price_manager.is_running.clone();
+        // Limit order
+        let stop_limit_orders = Arc::clone(&self.price_manager.stop_limit_orders);
+        let buy_stop_limit_orders = Arc::clone(&self.price_manager.buy_stop_limit_orders);
+        let sell_stop_limit_orders = Arc::clone(&self.price_manager.sell_stop_limit_orders);
+        let handle_stop_limit = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(PriceManager::handle_stop_limit_order(
+                stop_limit_orders,
+                buy_stop_limit_orders,
+                sell_stop_limit_orders,
+                stop_limit_rx,
+                sopt_limit_slfe_arc_clone,
+                sopt_limit_running_arc_clone,
+            ));
+        });
+        tasks.push(handle_price_listener);
+        tasks.push(handle_stop);
+        tasks.push(handle_stop_limit);
         // -------------------- day order handler -------------------
         let day_order_self_arc_clone = Arc::clone(&self);
         tasks.push(tokio::spawn(async move {
@@ -145,6 +204,7 @@ impl Slfe {
         for task in tasks {
             join!(task);
         }
+        Ok("Slfe Engine Started".to_string())
     }
 
     async fn start_depth_monitor(self: Arc<Self>) {

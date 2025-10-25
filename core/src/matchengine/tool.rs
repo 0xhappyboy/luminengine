@@ -25,25 +25,40 @@ pub mod order {}
 
 /// math tool
 pub mod math {
+
     /// Store f64 in u64 according to the IEEE 754 standard
     pub fn f64_to_atomic(value: f64) -> u64 {
         value.to_bits()
     }
+
     /// Recover an f64 value from an IEEE 754 standard u64 array.
     pub fn atomic_to_f64(value: u64) -> f64 {
         f64::from_bits(value)
     }
+
     /// calculate price change (percentage)
     pub fn cal_price_change(current_price: f64, last_price: f64) -> f64 {
         ((current_price - last_price) / last_price).abs()
     }
+
     /// calculate ewma
     pub fn cal_ewma(price_volatility: f64, price_change: f64) -> f64 {
         (price_volatility * 0.9) + (price_change * 0.1)
     }
+
     /// calculate mid price
     pub fn cal_mid_price(bid: f64, ask: f64) -> f64 {
         (bid + ask) / 2.0
+    }
+
+    /// for performance reasons, floating point prices are converted to u64 for calculation and sorting.
+    pub fn f64_to_price_u64(price: f64) -> u64 {
+        (price * 10000.0) as u64
+    }
+
+    /// restore the price to a floating point number.
+    pub fn price_u64_to_f64(price_key: u64) -> f64 {
+        price_key as f64 / 10000.0
     }
 }
 

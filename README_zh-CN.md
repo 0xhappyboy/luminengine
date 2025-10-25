@@ -74,7 +74,11 @@
 \text{AvgPrice} = \frac{\sum_{i=1}^{k} (p_i \times q_i)}{\sum_{i=1}^{k} q_i}
 ```
 
-### 冰山订单
+### 价格管理器
+
+![iceberg order manager](assets/architecture/price_manager_zhCN.png)
+
+### 冰山订单管理器
 
 ![iceberg order manager](assets/architecture/iceberg_manager_zhCN.png)
 

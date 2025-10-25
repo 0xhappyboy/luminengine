@@ -5,8 +5,8 @@ pub mod iceberg;
 pub mod ioc;
 pub mod limit;
 pub mod market;
-pub mod soptlimit;
 pub mod stop;
+pub mod stoplimit;
 
 use std::{sync::Arc, time::Instant};
 

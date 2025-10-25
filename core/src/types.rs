@@ -14,7 +14,11 @@ pub enum UnifiedError {
     UpdateCurrentPrice(String),
     EventSendError(String),
     Error(String),
-    InvalidOrder(String)
+    InvalidOrder(String),
+    PriceManagerError(String),
+    InvalidStopPrice(String),
+    InvalidLimitPrice(String),
+    OrderNotModifiable(String),
 }
 
 /// push order event
