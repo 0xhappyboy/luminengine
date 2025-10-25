@@ -5,3 +5,4 @@ pub mod iceberg;
 pub mod price_change;
 pub mod price_info;
 pub mod status;
+pub mod config;

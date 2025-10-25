@@ -43,11 +43,10 @@ impl IOCOrderProcessor {
                     if ask_price.to_f64() > ioc_order.price {
                         break;
                     }
-
                     if remaining_quantity <= 0.0 {
                         break;
                     }
-                    for shard_id in 0..slfe.config.read().shard_count {
+                    for shard_id in 0..slfe.config_manager.config.read().shard_count {
                         let shard = slfe.asks.shards[shard_id].read();
                         if let Some(orders) = shard.tree.get(&ask_price) {
                             for counter_order in orders {
@@ -90,7 +89,7 @@ impl IOCOrderProcessor {
                     if remaining_quantity <= 0.0 {
                         break;
                     }
-                    for shard_id in 0..slfe.config.read().shard_count {
+                    for shard_id in 0..slfe.config_manager.config.read().shard_count {
                         let shard = slfe.bids.shards[shard_id].read();
                         if let Some(orders) = shard.tree.get(&bid_price) {
                             for counter_order in orders {

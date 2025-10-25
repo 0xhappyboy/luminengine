@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use tokio::time::{Duration, interval};
+use std::{sync::Arc, thread::sleep};
+use tokio::time::Duration;
 
 use crate::{
     matchengine::slfe::{Slfe, sharding::OrderTreeSharding},
@@ -10,18 +10,21 @@ use crate::{
 
 const CLEANUP_TASK_INTERVAL: u64 = 30;
 
+#[derive(Debug)]
 pub struct ExpiredOrderManager;
 
 impl ExpiredOrderManager {
-    pub fn start_expiry_order_manager(slfe: Arc<Slfe>) {
-        let mut interval = interval(Duration::from_secs(CLEANUP_TASK_INTERVAL));
+    pub fn new() -> Self {
+        Self {}
+    }
+    pub fn start_expiry_order_manager(&self, slfe: Arc<Slfe>) {
         loop {
-            interval.tick();
             match Self::cleanup_expired_orders(slfe.clone()) {
                 Ok(expired_count) if expired_count > 0 => {}
                 Err(e) => {}
                 _ => {}
             }
+            sleep(Duration::from_secs(CLEANUP_TASK_INTERVAL));
         }
     }
 

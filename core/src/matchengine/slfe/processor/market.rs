@@ -96,7 +96,7 @@ impl MarketOrderProcessor {
     ) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
         let match_price = price.to_f64();
-        for shard_id in 0..slfe.config.read().shard_count {
+        for shard_id in 0..slfe.config_manager.config.read().shard_count {
             if remaining_quantity <= 0.0 {
                 break;
             }

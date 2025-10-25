@@ -12,6 +12,7 @@ use tokio::join;
 
 use crate::market::{MarketDepth, MarketDepthSnapshot};
 use crate::matchengine::MatchEvent;
+use crate::matchengine::slfe::manager::config::ConfigManager;
 use crate::matchengine::slfe::manager::event::EventManager;
 use crate::matchengine::slfe::manager::expired::ExpiredOrderManager;
 use crate::matchengine::slfe::manager::gtc::GTCOrderManager;
@@ -56,7 +57,8 @@ pub struct Slfe {
     pub asks: Arc<OrderTreeSharding<AskPrice>>,
     // order records the position in the slice mapping.
     pub order_location: Arc<DashMap<String, OrderLocation>>,
-    pub config: Arc<RwLock<MatchEngineConfig>>,
+    // config manager
+    pub config_manager: Arc<ConfigManager>,
     // price info manager
     pub price_info_manager: Arc<PriceInfoManager>,
     // iceberg order manager
@@ -69,19 +71,22 @@ pub struct Slfe {
     pub status_manager: Arc<StatusManager>,
     // price change manager
     pub price_change_manager: Arc<PriceChangeManager>,
+    // expired order manager
+    pub expired_order_manager: Arc<ExpiredOrderManager>,
 }
 
 impl Slfe {
     /// create a new slfe match engine
     pub fn new(config: Option<MatchEngineConfig>) -> Self {
-        let config = config.unwrap();
+        let config = config.unwrap_or(MatchEngineConfig::default());
         Self {
             bids: Arc::new(OrderTreeSharding::new(config.shard_count)),
             asks: Arc::new(OrderTreeSharding::new(config.shard_count)),
             // The mapping table of order positions in shards
             // key: order id, value: order location
             order_location: Arc::new(DashMap::new()),
-            config: Arc::new(RwLock::new(config)),
+            // config manager
+            config_manager: Arc::new(ConfigManager::new(config)),
             // price info manager
             price_info_manager: Arc::new(PriceInfoManager::new()),
             // iceberg order manager
@@ -94,6 +99,8 @@ impl Slfe {
             status_manager: Arc::new(StatusManager::new()),
             // price change manager
             price_change_manager: Arc::new(PriceChangeManager::new()),
+            // expired order manager
+            expired_order_manager: Arc::new(ExpiredOrderManager::new()),
         }
     }
 
@@ -104,10 +111,7 @@ impl Slfe {
         let event_manager_slfe_arc_clone = Arc::clone(&self);
         let event_manager_arc_clone = self.event_manager.clone();
         let event_handle = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(
-                event_manager_arc_clone.start_event_manager(event_manager_slfe_arc_clone),
-            );
+            event_manager_arc_clone.start_event_manager(event_manager_slfe_arc_clone);
         });
         // add event handle
         tasks.push(event_handle);
@@ -115,8 +119,7 @@ impl Slfe {
         let iceberg_self_arc_clone = Arc::clone(&self);
         let iceberg_arc_clone = self.iceberg_manager.clone();
         let iceberg_manager = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(iceberg_arc_clone.start_iceberg_manager(iceberg_self_arc_clone))
+            iceberg_arc_clone.start_iceberg_manager(iceberg_self_arc_clone);
         });
         // add iceberg manager
         tasks.push(iceberg_manager);
@@ -131,12 +134,14 @@ impl Slfe {
         let price_listener_slfe_arc_clone = self.clone();
         let price_listener_running_arc_clone = self.price_change_manager.is_running.clone();
         let handle_price_listener = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceChangeManager::price_listener_task(
-                price_listener_slfe_arc_clone,
-                price_listener_tx,
-                price_listener_running_arc_clone,
-            ));
+            price_listener_slfe_arc_clone
+                .clone()
+                .price_change_manager
+                .price_listener_task(
+                    price_listener_slfe_arc_clone,
+                    price_listener_tx,
+                    price_listener_running_arc_clone,
+                );
         });
         // handle stop
         let stop_rx = self.price_change_manager.rx.clone();
@@ -147,15 +152,17 @@ impl Slfe {
         let buy_stop_orders = Arc::clone(&self.price_change_manager.buy_stop_orders);
         let sell_stop_orders = Arc::clone(&self.price_change_manager.sell_stop_orders);
         let handle_stop = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceChangeManager::handle_stop_order(
-                stop_orders,
-                buy_stop_orders,
-                sell_stop_orders,
-                stop_rx,
-                sopt_slfe_arc_clone,
-                sopt_running_arc_clone,
-            ));
+            sopt_slfe_arc_clone
+                .clone()
+                .price_change_manager
+                .handle_stop_order(
+                    stop_orders,
+                    buy_stop_orders,
+                    sell_stop_orders,
+                    stop_rx,
+                    sopt_slfe_arc_clone,
+                    sopt_running_arc_clone,
+                );
         });
         // handle stop limit
         let stop_limit_rx = self.price_change_manager.rx.clone();
@@ -166,56 +173,51 @@ impl Slfe {
         let buy_stop_limit_orders = Arc::clone(&self.price_change_manager.buy_stop_limit_orders);
         let sell_stop_limit_orders = Arc::clone(&self.price_change_manager.sell_stop_limit_orders);
         let handle_stop_limit = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceChangeManager::handle_stop_limit_order(
-                stop_limit_orders,
-                buy_stop_limit_orders,
-                sell_stop_limit_orders,
-                stop_limit_rx,
-                sopt_limit_slfe_arc_clone,
-                sopt_limit_running_arc_clone,
-            ));
+            sopt_limit_slfe_arc_clone
+                .clone()
+                .price_change_manager
+                .handle_stop_limit_order(
+                    stop_limit_orders,
+                    buy_stop_limit_orders,
+                    sell_stop_limit_orders,
+                    stop_limit_rx,
+                    sopt_limit_slfe_arc_clone,
+                    sopt_limit_running_arc_clone,
+                );
         });
         tasks.push(handle_price_listener);
         tasks.push(handle_stop);
         tasks.push(handle_stop_limit);
-        // -------------------- day order handler -------------------
-        let day_order_self_arc_clone = Arc::clone(&self);
-        tasks.push(tokio::spawn(async move {
-            ExpiredOrderManager::start_expiry_order_manager(day_order_self_arc_clone)
-        }));
-        // --------------------- depth monitor ---------------------
-        let depth_self_arc_clone = Arc::clone(&self);
-        // add depth monitor
-        tasks.push(tokio::spawn(async move {
-            depth_self_arc_clone.start_depth_monitor();
-        }));
+        // -------------------- expired order manager -------------------
+        let expired_order_manager_self_arc_clone = Arc::clone(&self);
+        let expired_order_manager = tokio::task::spawn_blocking(move || {
+            expired_order_manager_self_arc_clone
+                .clone()
+                .expired_order_manager
+                .start_expiry_order_manager(expired_order_manager_self_arc_clone);
+        });
+        tasks.push(expired_order_manager);
+        // --------------------- price info manager ---------------------
+        let price_info_manager_self_arc_clone = Arc::clone(&self);
+        let price_info_manager = tokio::task::spawn_blocking(move || {
+            price_info_manager_self_arc_clone
+                .price_info_manager
+                .start_price_manager(price_info_manager_self_arc_clone.clone())
+        });
+        tasks.push(price_info_manager);
+        // ---------------------  config manager ---------------------
+        let config_manager_self_arc_clone = Arc::clone(&self);
+        let config_manager = tokio::task::spawn_blocking(move || {
+            config_manager_self_arc_clone
+                .config_manager
+                .clone()
+                .start_config_manager(config_manager_self_arc_clone);
+        });
+        tasks.push(config_manager);
         for task in tasks {
             let _ = join!(task);
         }
         Ok("Slfe Engine Started".to_string())
-    }
-
-    fn start_depth_monitor(self: Arc<Self>) {
-        let mut last_adjustment = Instant::now();
-        let adjustment_interval = Duration::from_secs(2);
-        let s = self.clone();
-        loop {
-            let depth = MarketDepth::from_slfe(self.clone());
-            // update mid price
-            if let Some(mid_price) = s.price_info_manager.cal_mid_price(self.clone()) {
-                s.price_info_manager
-                    .mid_price
-                    .store(f64_to_atomic(mid_price), Ordering::Relaxed);
-            }
-            if s.clone().config.read().enable_auto_tuning
-                && last_adjustment.elapsed() >= adjustment_interval
-            {
-                s.clone().auto_tuning(&depth);
-                last_adjustment = Instant::now();
-            }
-            let _ = tokio::time::sleep(Duration::from_millis(500));
-        }
     }
 
     /// Get the number of transactions available in the shard
@@ -230,7 +232,7 @@ impl Slfe {
                     {
                         break;
                     }
-                    for shard_id in 0..self.config.read().shard_count {
+                    for shard_id in 0..self.config_manager.config.read().shard_count {
                         let shard = self.asks.shards[shard_id].read();
                         if let Some(orders) = shard.tree.get(&ask_price) {
                             for counter_order in orders {
@@ -252,7 +254,7 @@ impl Slfe {
                     {
                         break;
                     }
-                    for shard_id in 0..self.config.read().shard_count {
+                    for shard_id in 0..self.config_manager.config.read().shard_count {
                         let shard = self.bids.shards[shard_id].read();
                         if let Some(orders) = shard.tree.get(&bid_price) {
                             for counter_order in orders {
@@ -266,34 +268,6 @@ impl Slfe {
                 available
             }
             OrderDirection::None => 0.0,
-        }
-    }
-
-    /// auto tuning engine performance configuration.
-    fn auto_tuning(self: Arc<Self>, depth: &MarketDepth) {
-        if self.config.read().enable_auto_tuning {
-            let total_orders = depth.bid_order_count + depth.ask_order_count;
-            // new batch size
-            let batch_size = if total_orders > 1_000_000 {
-                200
-            } else if total_orders > 100_000 {
-                500
-            } else {
-                1000
-            };
-            // new match interval
-            let match_interval = if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.0005 {
-                10
-            } else if depth.spread < depth.best_ask.unwrap_or(1.0) * 0.001 {
-                25
-            } else {
-                50
-            };
-            {
-                let mut config = self.config.write();
-                config.set_batch_size(batch_size);
-                config.set_match_interval(match_interval);
-            }
         }
     }
 
@@ -581,10 +555,10 @@ impl Slfe {
     }
 
     pub fn get_config(&self) -> MatchEngineConfig {
-        self.config.read().clone()
+        self.config_manager.config.read().clone()
     }
 
     pub fn update_config(&self, new_config: MatchEngineConfig) {
-        *self.config.write() = new_config;
+        *self.config_manager.config.write() = new_config;
     }
 }

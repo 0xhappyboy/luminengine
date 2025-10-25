@@ -39,15 +39,16 @@ impl EventManager {
     }
 
     /// start event engine
-    pub async fn start_event_manager(&self, slfe: Arc<Slfe>) {
-        let mut event_batch = Vec::<MatchEvent>::with_capacity(slfe.config.read().batch_size);
+    pub fn start_event_manager(&self, slfe: Arc<Slfe>) {
+        let mut event_batch =
+            Vec::<MatchEvent>::with_capacity(slfe.config_manager.config.read().batch_size);
         let mut last_process_time = Instant::now();
         // slfe arc clone
         let slfe_arc_clone = Arc::clone(&slfe);
         loop {
             // Hold the lock briefly to read dynamic configuration changes.
             let (batch_size, match_interval) = {
-                let config = slfe.config.read();
+                let config = slfe.config_manager.config.read();
                 (config.batch_size, config.match_interval)
             };
             // Dynamically obtain configuration
@@ -106,7 +107,7 @@ impl EventManager {
         }
     }
 
-    async fn handle_event_batch(slfe: Arc<Slfe>, events: &[MatchEvent]) {
+    fn handle_event_batch(slfe: Arc<Slfe>, events: &[MatchEvent]) {
         let start_time = Instant::now();
         let mut processed = 0;
         let mut matched = 0;

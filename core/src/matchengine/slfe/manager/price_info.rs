@@ -1,9 +1,13 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use crate::{
+    market::MarketDepth,
     matchengine::{
         MatchResult,
         slfe::Slfe,
@@ -34,8 +38,20 @@ impl PriceInfoManager {
             mid_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
         }
     }
+
+    pub fn start_price_manager(&self, slfe: Arc<Slfe>) {
+        loop {
+            // update mid price
+            if let Some(mid_price) = self.cal_mid_price(slfe.clone()) {
+                self.mid_price
+                    .store(f64_to_atomic(mid_price), Ordering::Relaxed);
+            }
+            let _ = tokio::time::sleep(Duration::from_millis(500));
+        }
+    }
+
     // Update order book price info
-    pub async fn update_price(&self, slfe: Arc<Slfe>, results: Vec<MatchResult>) {
+    pub fn update_price(&self, slfe: Arc<Slfe>, results: Vec<MatchResult>) {
         for result in results {
             if result.quantity > 0.0 {
                 self.current_price

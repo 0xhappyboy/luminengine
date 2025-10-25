@@ -192,7 +192,7 @@ impl IcebergOrderManager {
         }
     }
 
-    pub async fn start_iceberg_manager(self: Arc<Self>, engine: Arc<Slfe>) {
+    pub fn start_iceberg_manager(self: Arc<Self>, engine: Arc<Slfe>) {
         self.is_running.store(true, Ordering::Relaxed);
         let mut event_batch = Vec::<IcebergOrderEvent>::with_capacity(100);
         let mut last_cleanup_time = Instant::now();
@@ -542,7 +542,7 @@ impl IcebergOrderManager {
         }
     }
 
-    async fn handle_cancel_order(
+    fn handle_cancel_order(
         order_id: &str,
         cache_pool: &Arc<IcebergCachePool>,
         slfe: Arc<Slfe>,
@@ -559,7 +559,7 @@ impl IcebergOrderManager {
             if let Some(display_id) = &tier.display_order_id {
                 if tier.is_active && !tier.is_completed {
                     // cancel order
-                    OrderProcessor::handle_cancel_order(slfe.as_ref(), &display_id).await;
+                    OrderProcessor::handle_cancel_order(slfe.as_ref(), &display_id);
                 }
             }
         }

@@ -55,8 +55,8 @@ impl LimitOrderProcessor {
         ask_price: &AskPrice,
     ) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
-        for bid_shard_id in 0..slfe.config.read().shard_count {
-            for ask_shard_id in 0..slfe.config.read().shard_count {
+        for bid_shard_id in 0..slfe.config_manager.config.read().shard_count {
+            for ask_shard_id in 0..slfe.config_manager.config.read().shard_count {
                 let results = Self::match_shard_pair(
                     slfe.clone(),
                     bid_shard_id,

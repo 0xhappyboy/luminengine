@@ -70,7 +70,8 @@ impl PriceChangeManager {
         }
     }
 
-    pub async fn price_listener_task(
+    pub fn price_listener_task(
+        &self,
         slfe: Arc<Slfe>,
         tx: Sender<f64>,
         is_running: Arc<AtomicBool>,
@@ -86,11 +87,12 @@ impl PriceChangeManager {
                 }
                 last_price = current_price;
             }
-            tokio::time::sleep(price_check_interval).await;
+            std::thread::sleep(price_check_interval);
         }
     }
 
-    pub async fn handle_stop_order(
+    pub fn handle_stop_order(
+        &self,
         stop_orders: Arc<DashMap<String, StopOrder>>,
         buy_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
         sell_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
@@ -105,22 +107,21 @@ impl PriceChangeManager {
                     &buy_stop_orders,
                     current_price,
                     Arc::clone(&slfe),
-                )
-                .await;
+                );
                 Self::handle_sell_stop_orders(
                     &stop_orders,
                     &sell_stop_orders,
                     current_price,
                     Arc::clone(&slfe),
-                )
-                .await;
+                );
                 Self::clean_expired_orders(&stop_orders, &buy_stop_orders, &sell_stop_orders);
             }
-            tokio::time::sleep(Duration::from_micros(50)).await;
+            std::thread::sleep(Duration::from_micros(50));
         }
     }
 
-    pub async fn handle_stop_limit_order(
+    pub fn handle_stop_limit_order(
+        &self,
         stop_orders: Arc<DashMap<String, StopOrder>>,
         buy_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
         sell_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
@@ -135,24 +136,20 @@ impl PriceChangeManager {
                     &buy_stop_orders,
                     current_price,
                     Arc::clone(&slfe),
-                )
-                .await;
+                );
                 Self::handle_sell_stop_limit_orders(
                     &stop_orders,
                     &sell_stop_orders,
                     current_price,
                     Arc::clone(&slfe),
-                )
-                .await;
-
+                );
                 Self::clean_expired_orders(&stop_orders, &buy_stop_orders, &sell_stop_orders);
             }
-
-            tokio::time::sleep(Duration::from_micros(50)).await;
+            std::thread::sleep(Duration::from_micros(50));
         }
     }
 
-    async fn handle_buy_stop_orders(
+    fn handle_buy_stop_orders(
         stop_orders: &DashMap<String, StopOrder>,
         buy_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
         current_price: f64,
@@ -183,7 +180,7 @@ impl PriceChangeManager {
         }
     }
 
-    async fn handle_sell_stop_orders(
+    fn handle_sell_stop_orders(
         stop_orders: &DashMap<String, StopOrder>,
         sell_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
         current_price: f64,
@@ -213,7 +210,7 @@ impl PriceChangeManager {
         }
     }
 
-    async fn handle_buy_stop_limit_orders(
+    fn handle_buy_stop_limit_orders(
         stop_orders: &DashMap<String, StopOrder>,
         buy_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
         current_price: f64,
@@ -243,7 +240,7 @@ impl PriceChangeManager {
         }
     }
 
-    async fn handle_sell_stop_limit_orders(
+    fn handle_sell_stop_limit_orders(
         stop_orders: &DashMap<String, StopOrder>,
         sell_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
         current_price: f64,

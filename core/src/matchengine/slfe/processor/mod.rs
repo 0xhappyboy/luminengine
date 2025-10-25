@@ -88,7 +88,7 @@ impl OrderProcessor {
     }
 
     /// Unified order cancellation entry
-    pub async fn handle_cancel_order(slfe: &Slfe, order_id: &str) {
+    pub fn handle_cancel_order(slfe: &Slfe, order_id: &str) {
         if let Some(location) = slfe.order_location.get(order_id) {
             match location.direction {
                 OrderDirection::Buy => {
