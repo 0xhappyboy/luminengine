@@ -11,6 +11,17 @@ A high-performance financial quantitative trading order book matching framework.
 <a href="./README_zh-CN.md">简体中文</a> | <a href="./README.md">English</a>
 </p>
 
+## 📚 Directory
+
+| **directory**        | **role**                             |
+| :------------------- | :----------------------------------- |
+| **core**             | Order book engine core code.         |
+| **manager-desktop**  | Order Book Engine Desktop Manager.   |
+| **emulator-desktop** | Desktop order book engine simulator. |
+| **server**           | Engine service command line program. |
+| **terminal**         | Command line terminal visualizer     |
+| **builder/rpc**      | RPC protocol file builder.           |
+
 ## Supported Order Types
 
 <div class="markdown-accessiblity-table" style="display: block; width: 100% !important; max-width: none !important;">

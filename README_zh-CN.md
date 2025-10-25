@@ -11,6 +11,17 @@
 <a href="./README_zh-CN.md">简体中文</a> | <a href="./README.md">English</a>
 </p>
 
+## 📚 Directory
+
+| **目录**             | **角色**                |
+| :------------------- | :---------------------- |
+| **core**             | 订单簿引擎核心代码.     |
+| **manager-desktop**  | 订单簿引擎桌面端管理器. |
+| **emulator-desktop** | 桌面端模拟器.           |
+| **server**           | 引擎服务命令行程序.     |
+| **terminal**         | 命令行终端可视化工具.   |
+| **builder/rpc**      | RPC 协议文件生成器.     |
+
 ## 支持订单类型
 
 <div class="markdown-accessiblity-table" style="display: block; width: 100% !important; max-width: none !important;">
