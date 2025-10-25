@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, RwLock},
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 use axum::{
     Json, Router,
@@ -11,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -80,7 +78,7 @@ impl OrderBookHttpService {
     async fn push_order(Json(vo): Json<OrderVO>) -> impl IntoResponse {
         if OrderBooks::contains_symbol(vo.clone().symbol) {
             let mut orderbook = OrderBooks::get_orderbook_by_symbol(vo.clone().symbol);
-            let mut orderbook = orderbook.as_mut().unwrap().write().unwrap();
+            let mut orderbook = orderbook.as_mut().unwrap().write();
             let order = vo.to_order();
             orderbook.push_order(order);
             (

@@ -82,7 +82,7 @@ pub enum IcebergOrderEvent {
 }
 
 #[derive(Debug)]
-struct IcebergCachePool {
+pub struct IcebergCachePool {
     active_orders: DashMap<String, IcebergOrderStatus>,
     display_to_iceberg: DashMap<String, String>,
     cache_hits: AtomicU64,
@@ -99,12 +99,12 @@ impl IcebergCachePool {
         }
     }
 
-    fn add_iceberg_order(&self, order_state: IcebergOrderStatus) {
+    pub fn add_iceberg_order(&self, order_state: IcebergOrderStatus) {
         let order_id = order_state.original_order_id.clone();
         self.active_orders.insert(order_id, order_state);
     }
 
-    fn get_iceberg_order(&self, order_id: &str) -> Option<IcebergOrderStatus> {
+    pub fn get_iceberg_order(&self, order_id: &str) -> Option<IcebergOrderStatus> {
         match self.active_orders.get(order_id) {
             Some(state) => {
                 self.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -178,7 +178,7 @@ pub struct IcebergOrderManager {
     pub event_tx: Sender<IcebergOrderEvent>,
     event_rx: Receiver<IcebergOrderEvent>,
     is_running: Arc<AtomicBool>,
-    cache_pool: Arc<IcebergCachePool>,
+    pub cache_pool: Arc<IcebergCachePool>,
 }
 
 impl IcebergOrderManager {
@@ -191,8 +191,8 @@ impl IcebergOrderManager {
             cache_pool: Arc::new(IcebergCachePool::new()),
         }
     }
- 
-   pub async fn start_iceberg_manager(self: Arc<Self>, engine: Arc<Slfe>) {
+
+    pub async fn start_iceberg_manager(self: Arc<Self>, engine: Arc<Slfe>) {
         self.is_running.store(true, Ordering::Relaxed);
         let mut event_batch = Vec::<IcebergOrderEvent>::with_capacity(100);
         let mut last_cleanup_time = Instant::now();
@@ -243,7 +243,7 @@ impl IcebergOrderManager {
                 Self::handle_create_order(order.clone(), config.clone(), cache_pool, engine);
             }
             IcebergOrderEvent::Cancel { order_id } => {
-                Self::handle_cancel_order(order_id, cache_pool, engine);
+                Self::handle_cancel_order(order_id, cache_pool, engine.clone());
             }
             IcebergOrderEvent::TierFilled {
                 display_order_id,
@@ -550,10 +550,10 @@ impl IcebergOrderManager {
         }
     }
 
-    fn handle_cancel_order(
+    async fn handle_cancel_order(
         order_id: &str,
         cache_pool: &Arc<IcebergCachePool>,
-        slfe: &Slfe,
+        slfe: Arc<Slfe>,
     ) -> UnifiedResult<String> {
         let state = match cache_pool.get_iceberg_order(order_id) {
             Some(state) => state,
@@ -567,7 +567,7 @@ impl IcebergOrderManager {
             if let Some(display_id) = &tier.display_order_id {
                 if tier.is_active && !tier.is_completed {
                     // cancel order
-                    OrderProcessor::handle_cancel_order(slfe, &display_id);
+                    OrderProcessor::handle_cancel_order(slfe.as_ref(), &display_id).await;
                 }
             }
         }

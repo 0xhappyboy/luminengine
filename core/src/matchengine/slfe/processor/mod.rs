@@ -41,7 +41,7 @@ impl OrderProcessor {
         match order.order_type {
             crate::order::OrderType::Limit => {
                 let slfe_arc_clone = slfe.clone();
-                LimitOrderProcessor::add(slfe_arc_clone, order);
+                let _ = LimitOrderProcessor::add(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::Market => {
@@ -66,18 +66,22 @@ impl OrderProcessor {
             }
             crate::order::OrderType::IOC => {
                 let slfe_arc_clone = slfe.clone();
-                IOCOrderProcessor::handle_ioc_order(slfe_arc_clone, order).await;
+                let _ = IOCOrderProcessor::handle_ioc_order(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::Iceberg => {
                 let slfe_arc_clone = slfe.clone();
-                IcebergOrderProcessor::handle(slfe_arc_clone, order).await;
+                let _ = IcebergOrderProcessor::handle(slfe_arc_clone, order).await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::DAY => {
                 let slfe_arc_clone = slfe.clone();
-                DAYOrderProcessor::handle(slfe_arc_clone, order, tool::expiry::expiry_today_end())
-                    .await;
+                let _ = DAYOrderProcessor::handle(
+                    slfe_arc_clone,
+                    order,
+                    tool::expiry::expiry_today_end(),
+                )
+                .await;
                 return Ok("".to_string());
             }
             crate::order::OrderType::GTC => GTCOrderProcessor::handle(slfe, order).await,

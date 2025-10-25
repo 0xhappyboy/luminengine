@@ -19,9 +19,16 @@ use crate::market::{MarketDepth, MarketDepthSnapshot};
 use crate::matchengine::slfe::manager::event::EventManager;
 use crate::matchengine::slfe::manager::expired::ExpiredOrderManager;
 use crate::matchengine::slfe::manager::gtc::GTCOrderManager;
-use crate::matchengine::slfe::manager::iceberg::IcebergOrderManager;
-use crate::matchengine::slfe::manager::price::PriceManager;
-use crate::matchengine::slfe::manager::status::StatusManager;
+use crate::matchengine::slfe::manager::iceberg::{
+    IcebergOrderEvent, IcebergOrderManager, IcebergOrderStatus,
+};
+use crate::matchengine::slfe::manager::price_change::{PriceChangeManager, StopOrderStatus};
+use crate::matchengine::slfe::manager::price_info::PriceInfoManager;
+use crate::matchengine::slfe::manager::status::{SlfeStatus, StatusManager};
+use crate::matchengine::slfe::processor::OrderProcessor;
+use crate::matchengine::slfe::processor::ioc::IOCOrderProcessor;
+use crate::matchengine::slfe::processor::stop::StopOrderProcessor;
+use crate::matchengine::slfe::processor::stoplimit::StopLimitOrderProcessor;
 use crate::matchengine::slfe::sharding::{OrderLocation, OrderTreeSharding};
 use crate::matchengine::tool::math::{
     atomic_to_f64, cal_ewma, cal_mid_price, cal_price_change, f64_to_atomic,
@@ -57,12 +64,8 @@ pub struct Slfe {
     // order records the position in the slice mapping.
     pub order_location: Arc<DashMap<String, OrderLocation>>,
     pub config: Arc<RwLock<MatchEngineConfig>>,
-    // current price
-    pub current_price: Arc<AtomicU64>,
-    // last match price
-    pub last_match_price: Arc<AtomicU64>,
-    // mid price
-    pub mid_price: Arc<AtomicU64>,
+    // price info manager
+    pub price_info_manager: Arc<PriceInfoManager>,
     // iceberg order manager
     pub iceberg_manager: Arc<IcebergOrderManager>,
     // gtc order manager
@@ -71,8 +74,8 @@ pub struct Slfe {
     pub event_manager: Arc<EventManager>,
     // status manager
     pub status_manager: Arc<StatusManager>,
-    // price manager
-    pub price_manager: Arc<PriceManager>,
+    // price change manager
+    pub price_change_manager: Arc<PriceChangeManager>,
 }
 
 impl Slfe {
@@ -86,12 +89,8 @@ impl Slfe {
             // key: order id, value: order location
             order_location: Arc::new(DashMap::new()),
             config: Arc::new(RwLock::new(config)),
-            // current price
-            current_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
-            // last match price
-            last_match_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
-            // mid price
-            mid_price: Arc::new(AtomicU64::new(f64_to_atomic(0.0f64))),
+            // price info manager
+            price_info_manager: Arc::new(PriceInfoManager::new()),
             // iceberg order manager
             iceberg_manager: Arc::new(IcebergOrderManager::new()),
             // gtc order manager
@@ -100,8 +99,8 @@ impl Slfe {
             event_manager: Arc::new(EventManager::new()),
             // status manager
             status_manager: Arc::new(StatusManager::new()),
-            // price manager
-            price_manager: Arc::new(PriceManager::new()),
+            // price change manager
+            price_change_manager: Arc::new(PriceChangeManager::new()),
         }
     }
 
@@ -138,28 +137,28 @@ impl Slfe {
         tasks.push(gtc_manager);
         // -------------------- price manager -------------------
         // price listener
-        let price_listener_tx = self.price_manager.tx.clone();
+        let price_listener_tx = self.price_change_manager.tx.clone();
         let price_listener_slfe_arc_clone = self.clone();
-        let price_listener_running_arc_clone = self.price_manager.is_running.clone();
+        let price_listener_running_arc_clone = self.price_change_manager.is_running.clone();
         let handle_price_listener = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceManager::price_listener_task(
+            runtime.block_on(PriceChangeManager::price_listener_task(
                 price_listener_slfe_arc_clone,
                 price_listener_tx,
                 price_listener_running_arc_clone,
             ));
         });
         // handle stop
-        let stop_rx = self.price_manager.rx.clone();
+        let stop_rx = self.price_change_manager.rx.clone();
         let sopt_slfe_arc_clone = self.clone();
-        let sopt_running_arc_clone = self.price_manager.is_running.clone();
+        let sopt_running_arc_clone = self.price_change_manager.is_running.clone();
         // Market-filled orders
-        let stop_orders = Arc::clone(&self.price_manager.stop_orders);
-        let buy_stop_orders = Arc::clone(&self.price_manager.buy_stop_orders);
-        let sell_stop_orders = Arc::clone(&self.price_manager.sell_stop_orders);
+        let stop_orders = Arc::clone(&self.price_change_manager.stop_orders);
+        let buy_stop_orders = Arc::clone(&self.price_change_manager.buy_stop_orders);
+        let sell_stop_orders = Arc::clone(&self.price_change_manager.sell_stop_orders);
         let handle_stop = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceManager::handle_stop_order(
+            runtime.block_on(PriceChangeManager::handle_stop_order(
                 stop_orders,
                 buy_stop_orders,
                 sell_stop_orders,
@@ -169,16 +168,16 @@ impl Slfe {
             ));
         });
         // handle stop limit
-        let stop_limit_rx = self.price_manager.rx.clone();
+        let stop_limit_rx = self.price_change_manager.rx.clone();
         let sopt_limit_slfe_arc_clone = self.clone();
-        let sopt_limit_running_arc_clone = self.price_manager.is_running.clone();
+        let sopt_limit_running_arc_clone = self.price_change_manager.is_running.clone();
         // Limit order
-        let stop_limit_orders = Arc::clone(&self.price_manager.stop_limit_orders);
-        let buy_stop_limit_orders = Arc::clone(&self.price_manager.buy_stop_limit_orders);
-        let sell_stop_limit_orders = Arc::clone(&self.price_manager.sell_stop_limit_orders);
+        let stop_limit_orders = Arc::clone(&self.price_change_manager.stop_limit_orders);
+        let buy_stop_limit_orders = Arc::clone(&self.price_change_manager.buy_stop_limit_orders);
+        let sell_stop_limit_orders = Arc::clone(&self.price_change_manager.sell_stop_limit_orders);
         let handle_stop_limit = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(PriceManager::handle_stop_limit_order(
+            runtime.block_on(PriceChangeManager::handle_stop_limit_order(
                 stop_limit_orders,
                 buy_stop_limit_orders,
                 sell_stop_limit_orders,
@@ -214,8 +213,9 @@ impl Slfe {
         loop {
             let depth = MarketDepth::from_slfe(self.clone()).await;
             // update mid price
-            if let Some(mid_price) = s.calculate_mid_price() {
-                s.mid_price
+            if let Some(mid_price) = s.price_info_manager.cal_mid_price(self.clone()) {
+                s.price_info_manager
+                    .mid_price
                     .store(f64_to_atomic(mid_price), Ordering::Relaxed);
             }
             if s.clone().config.read().enable_auto_tuning
@@ -456,28 +456,25 @@ impl Slfe {
 
     /// get current price
     pub fn get_current_price(&self) -> f64 {
-        atomic_to_f64(self.current_price.load(Ordering::Relaxed))
+        atomic_to_f64(
+            self.price_info_manager
+                .current_price
+                .load(Ordering::Relaxed),
+        )
     }
 
     /// get last match price
     pub fn get_last_match_price(&self) -> f64 {
-        atomic_to_f64(self.last_match_price.load(Ordering::Relaxed))
+        atomic_to_f64(
+            self.price_info_manager
+                .last_match_price
+                .load(Ordering::Relaxed),
+        )
     }
 
     /// get mid price
     pub fn get_mid_price(&self) -> f64 {
-        atomic_to_f64(self.mid_price.load(Ordering::Relaxed))
-    }
-
-    /// calculate mid price
-    fn calculate_mid_price(&self) -> Option<f64> {
-        if let (Some(best_bid), Some(best_ask)) =
-            (self.bids.get_best_price(), self.asks.get_best_price())
-        {
-            Some(cal_mid_price(best_bid.to_f64(), best_ask.to_f64()))
-        } else {
-            None
-        }
+        atomic_to_f64(self.price_info_manager.mid_price.load(Ordering::Relaxed))
     }
 
     /// update current price
@@ -487,13 +484,126 @@ impl Slfe {
                 "Price must be greater than 0".to_string(),
             ));
         }
-        self.current_price
+        self.price_info_manager
+            .current_price
             .store(f64_to_atomic(price), Ordering::Relaxed);
         Ok(())
     }
 
-    // add order
-    // pub async fn add_order(&self, order: Order) -> UnifiedResult<String> {
-    //     OrderProcessor::handle_new_order(self, order).await
-    // }
+    pub async fn add_order(self: Arc<Self>, order: Order) -> UnifiedResult<String> {
+        OrderProcessor::handle_new_order(self.clone(), order).await
+    }
+
+    pub fn add_stop_order(
+        self: Arc<Self>,
+        original_order: Order,
+        stop_price: f64,
+        expiry_seconds: Option<u64>,
+    ) -> UnifiedResult<String> {
+        StopOrderProcessor::add_stop_order(self.clone(), original_order, stop_price, expiry_seconds)
+    }
+
+    pub fn add_stop_limit_order(
+        self: Arc<Self>,
+        original_order: Order,
+        stop_price: f64,
+        limit_price: f64,
+        expiry_seconds: Option<u64>,
+    ) -> UnifiedResult<String> {
+        StopLimitOrderProcessor::add_stop_limit_order(
+            self.clone(),
+            original_order,
+            stop_price,
+            limit_price,
+            expiry_seconds,
+        )
+    }
+
+    pub fn cancel_stop_order(&self, order_id: &str) -> UnifiedResult<bool> {
+        self.price_change_manager.cancel_stop_order(order_id)
+    }
+
+    pub fn modify_stop_order(
+        &self,
+        order_id: &str,
+        new_stop_price: f64,
+        new_limit_price: Option<f64>,
+    ) -> UnifiedResult<bool> {
+        self.price_change_manager
+            .set_stop_order(order_id, new_stop_price, new_limit_price)
+    }
+
+    pub fn get_gtc_order(&self, order_id: &str) -> Option<Order> {
+        self.gtc_manager.get_order(order_id)
+    }
+
+    pub fn get_active_gtc_orders(&self) -> Vec<Order> {
+        self.gtc_manager.get_active_orders()
+    }
+
+    pub async fn check_ioc_feasibility(&self, order: &Order) -> (bool, f64) {
+        IOCOrderProcessor::check_ioc_feasibility(self, order).await
+    }
+
+    pub fn get_iceberg_order_status(&self, order_id: &str) -> Option<IcebergOrderStatus> {
+        self.iceberg_manager.cache_pool.get_iceberg_order(order_id)
+    }
+
+    pub fn cancel_iceberg_order(&self, order_id: &str) -> UnifiedResult<String> {
+        self.iceberg_manager
+            .event_tx
+            .send(IcebergOrderEvent::Cancel {
+                order_id: order_id.to_string(),
+            })
+            .map_err(|_| {
+                UnifiedError::IcebergOrderError("Failed to send cancel event".to_string())
+            })?;
+        Ok("Cancel successful".to_string())
+    }
+
+    pub fn get_stop_order_status(&self, order_id: &str) -> Option<StopOrderStatus> {
+        self.price_change_manager.get_stop_order_status(order_id)
+    }
+
+    pub fn get_engine_stats(&self) -> Arc<RwLock<SlfeStatus>> {
+        self.status_manager.status.clone()
+    }
+
+    pub fn get_order_location(&self, order_id: &str) -> Option<OrderLocation> {
+        self.order_location.get(order_id).map(|entry| entry.clone())
+    }
+
+    pub async fn batch_cancel_orders(self: Arc<Self>, order_ids: &[&str]) {
+        for &order_id in order_ids {
+            self.clone().cancel_order(order_id).await;
+        }
+    }
+
+    pub async fn cancel_order(self: Arc<Self>, order_id: &str) {
+        OrderProcessor::handle_cancel_order(self.as_ref(), order_id).await;
+    }
+
+    pub fn reload_pending_gtc_orders(&self) -> UnifiedResult<Vec<Order>> {
+        self.gtc_manager.load_pending_gtc_orders()
+    }
+
+    pub fn get_total_active_orders(&self) -> usize {
+        self.bids.get_total_order_count() + self.asks.get_total_order_count()
+    }
+
+    pub async fn cleanup_expired_orders(self: Arc<Self>) -> UnifiedResult<usize> {
+        ExpiredOrderManager::cleanup_expired_orders(self.clone()).await
+    }
+
+    pub fn trigger_immediate_match(&self) -> UnifiedResult<String> {
+        self.event_manager.send_event(MatchEvent::ImmediateMatch)
+    }
+
+    pub fn get_config(&self) -> MatchEngineConfig {
+        self.config.read().clone()
+    }
+
+    pub fn update_config(&self, new_config: MatchEngineConfig) {
+        *self.config.write() = new_config;
+    }
 }

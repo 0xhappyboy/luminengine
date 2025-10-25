@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use crate::{
     matchengine::{
         slfe::{Slfe, processor::OrderProcessor},
-        tool::math::f64_to_price_key,
+        tool::math::f64_to_price_u64,
     },
     order::{Order, OrderDirection},
     types::{UnifiedError, UnifiedResult},
@@ -41,7 +41,7 @@ pub struct StopOrder {
 }
 
 #[derive(Debug)]
-pub struct PriceManager {
+pub struct PriceChangeManager {
     pub stop_orders: Arc<DashMap<String, StopOrder>>,
     pub buy_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
     pub sell_stop_orders: Arc<RwLock<BTreeMap<u64, Vec<String>>>>,
@@ -53,7 +53,7 @@ pub struct PriceManager {
     pub is_running: Arc<AtomicBool>,
 }
 
-impl PriceManager {
+impl PriceChangeManager {
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         Self {
@@ -157,7 +157,7 @@ impl PriceManager {
         current_price: f64,
         slfe: Arc<Slfe>,
     ) {
-        let price_key = f64_to_price_key(current_price);
+        let price_key = f64_to_price_u64(current_price);
         let triggered_orders = {
             let buy_orders = buy_stop_orders.read();
 
@@ -188,7 +188,7 @@ impl PriceManager {
         current_price: f64,
         slfe: Arc<Slfe>,
     ) {
-        let price_key = f64_to_price_key(current_price);
+        let price_key = f64_to_price_u64(current_price);
         let triggered_orders = {
             let sell_orders = sell_stop_orders.read();
 
@@ -218,7 +218,7 @@ impl PriceManager {
         current_price: f64,
         slfe: Arc<Slfe>,
     ) {
-        let price_key = f64_to_price_key(current_price);
+        let price_key = f64_to_price_u64(current_price);
         let triggered_orders = {
             let buy_orders = buy_stop_orders.read();
 
@@ -248,7 +248,7 @@ impl PriceManager {
         current_price: f64,
         slfe: Arc<Slfe>,
     ) {
-        let price_key = f64_to_price_key(current_price);
+        let price_key = f64_to_price_u64(current_price);
         let triggered_orders = {
             let sell_orders = sell_stop_orders.read();
             sell_orders
@@ -429,7 +429,7 @@ impl PriceManager {
     }
 
     fn add_to_stop_price_index(&self, stop_order: &StopOrder) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {
@@ -451,7 +451,7 @@ impl PriceManager {
     }
 
     fn add_to_stop_limit_price_index(&self, stop_order: &StopOrder) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {
@@ -473,7 +473,7 @@ impl PriceManager {
     }
 
     fn remove_from_stop_price_index(&self, stop_order: &StopOrder) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {
@@ -499,7 +499,7 @@ impl PriceManager {
     }
 
     fn remove_from_stop_limit_price_index(&self, stop_order: &StopOrder) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {
@@ -525,7 +525,7 @@ impl PriceManager {
     }
 
     fn add_to_price_index(&self, stop_order: &StopOrder) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {
@@ -551,7 +551,7 @@ impl PriceManager {
         buy_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
         sell_stop_orders: &RwLock<BTreeMap<u64, Vec<String>>>,
     ) {
-        let price_key = f64_to_price_key(stop_order.stop_price);
+        let price_key = f64_to_price_u64(stop_order.stop_price);
 
         match stop_order.original_order.direction {
             OrderDirection::Buy => {

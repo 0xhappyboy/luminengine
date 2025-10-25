@@ -368,15 +368,6 @@ where
         self.remove_order(&location.order_id, location.shard_id)
     }
 
-    fn find_order_price_key(&self, shard: &OrderTree<P>, order_id: &str) -> Option<u64> {
-        for (price, orders) in &shard.tree {
-            if orders.iter().any(|order| order.id == order_id) {
-                return Some((price.to_f64() * 10000.0) as u64);
-            }
-        }
-        None
-    }
-
     pub fn get_location_by_order_id(&self, order_id: &str) -> Option<OrderLocation> {
         let shard_id = self.get_shard_index(order_id);
         if shard_id >= self.shards.len() {

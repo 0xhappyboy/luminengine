@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use parking_lot::RwLock;
 
@@ -7,7 +10,7 @@ use crate::matchengine::{
     tool::math::{atomic_to_f64, cal_ewma, cal_price_change, f64_to_atomic},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SlfeStatus {
     pub orders_processed: u64,
     pub orders_matched: u64,
@@ -40,13 +43,13 @@ impl SlfeStatus {
 
 #[derive(Debug)]
 pub struct StatusManager {
-    pub status: RwLock<SlfeStatus>,
+    pub status: Arc<RwLock<SlfeStatus>>,
 }
 
 impl StatusManager {
     pub fn new() -> Self {
         Self {
-            status: RwLock::new(SlfeStatus::new()),
+            status: Arc::new(RwLock::new(SlfeStatus::new())),
         }
     }
 

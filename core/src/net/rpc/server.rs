@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::config::RPC_LISTENER_PORT;
 use crate::order::OrderDirection;
@@ -7,6 +7,7 @@ use crate::target::Target;
 /// order book RPC service, RPC service for handling order books
 use orderbook::order_book_service_server::{OrderBookService, OrderBookServiceServer};
 use orderbook::{Order, OrderBook, OrderResponse};
+use parking_lot::RwLock;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
@@ -103,7 +104,6 @@ fn handle_order(
             Some(orderbook) => {
                 orderbook
                     .write()
-                    .unwrap()
                     .push_order(crate::order::Order::from_rpc_order(
                         order.clone(),
                         order_direction,
