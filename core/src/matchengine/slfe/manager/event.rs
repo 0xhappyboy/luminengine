@@ -55,21 +55,21 @@ impl EventManager {
             while let Ok(event) = slfe_arc_clone.event_manager.rx.try_recv() {
                 event_batch.push(event);
                 if event_batch.len() >= batch_size {
-                    Self::handle_event_batch(slfe_arc_clone.clone(), &event_batch).await;
+                    Self::handle_event_batch(slfe_arc_clone.clone(), &event_batch);
                     event_batch.clear();
                     last_process_time = Instant::now();
                 }
             }
             if !event_batch.is_empty() && last_process_time.elapsed() >= process_interval {
-                Self::handle_event_batch(slfe_arc_clone.clone(), &event_batch).await;
+                Self::handle_event_batch(slfe_arc_clone.clone(), &event_batch);
                 event_batch.clear();
                 last_process_time = Instant::now();
             }
             // Assume that there are no events, execute the logic.
             if event_batch.is_empty() {
-                Self::try_continuous_match(slfe_arc_clone.clone()).await;
+                Self::try_continuous_match(slfe_arc_clone.clone());
             }
-            tokio::time::sleep(EVENT_MANAGER_SLEEP_MICROS).await;
+            tokio::time::sleep(EVENT_MANAGER_SLEEP_MICROS);
         }
     }
 
@@ -78,7 +78,7 @@ impl EventManager {
         let mut total_matched = 0;
         while match_occurred {
             match_occurred = false;
-            if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()).await {
+            if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()) {
                 if !results.is_empty() {
                     match_occurred = true;
                     total_matched += results.len();
@@ -91,9 +91,7 @@ impl EventManager {
                             .last_match_price
                             .store(f64_to_atomic(last_price), Ordering::Relaxed);
                     }
-                    slfe.price_info_manager
-                        .update_price(slfe.clone(), results)
-                        .await;
+                    slfe.price_info_manager.update_price(slfe.clone(), results);
                 }
             }
             if total_matched > MAX_CONTINUOUS_MATCH_LIMIT {
@@ -117,25 +115,21 @@ impl EventManager {
             match event {
                 MatchEvent::NewLimitOrder => {
                     processed += 1;
-                    if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()).await {
+                    if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()) {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
-                        slfe.price_info_manager
-                            .update_price(slfe.clone(), results)
-                            .await;
+                        slfe.price_info_manager.update_price(slfe.clone(), results);
                     }
                 }
                 MatchEvent::CancelOrder(order_id) => {
                     processed += 1;
-                    OrderProcessor::handle_cancel_order(slfe.as_ref(), order_id).await;
+                    OrderProcessor::handle_cancel_order(slfe.as_ref(), order_id);
                 }
                 MatchEvent::ImmediateMatch => {
-                    if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()).await {
+                    if let Some(results) = LimitOrderProcessor::handle(slfe.as_ref()) {
                         matched += results.len();
                         total_quantity += results.iter().map(|r| r.quantity).sum::<f64>();
-                        slfe.price_info_manager
-                            .update_price(slfe.clone(), results)
-                            .await;
+                        slfe.price_info_manager.update_price(slfe.clone(), results);
                     }
                 }
                 MatchEvent::UpdateConfig {

@@ -10,10 +10,10 @@ pub struct MarketOrderProcessor;
 
 impl MarketOrderProcessor {
     /// handle market order
-    pub async fn handle(slfe: Arc<Slfe>, market_order: Order) -> Vec<MatchResult> {
+    pub fn handle(slfe: Arc<Slfe>, market_order: Order) -> Vec<MatchResult> {
         match market_order.direction {
-            OrderDirection::Buy => Self::market_order_match_buy_order(slfe, market_order).await,
-            OrderDirection::Sell => Self::market_order_match_sell_order(slfe, market_order).await,
+            OrderDirection::Buy => Self::market_order_match_buy_order(slfe, market_order),
+            OrderDirection::Sell => Self::market_order_match_sell_order(slfe, market_order),
             OrderDirection::None => {
                 vec![]
             }
@@ -21,10 +21,7 @@ impl MarketOrderProcessor {
     }
 
     /// match buy orders.
-    async fn market_order_match_buy_order(
-        slfe: Arc<Slfe>,
-        mut market_order: Order,
-    ) -> Vec<MatchResult> {
+    fn market_order_match_buy_order(slfe: Arc<Slfe>, mut market_order: Order) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
         let mut remaining_quantity = market_order.quantity;
         let sorted_ask_prices = slfe.asks.get_all_ask_prices_sorted();
@@ -38,8 +35,7 @@ impl MarketOrderProcessor {
                 &ask_price,
                 remaining_quantity,
                 OrderDirection::Buy,
-            )
-            .await;
+            );
             for result in &results {
                 remaining_quantity -= result.quantity;
             }
@@ -58,10 +54,7 @@ impl MarketOrderProcessor {
     }
 
     /// match sell order
-    async fn market_order_match_sell_order(
-        slfe: Arc<Slfe>,
-        mut market_order: Order,
-    ) -> Vec<MatchResult> {
+    fn market_order_match_sell_order(slfe: Arc<Slfe>, mut market_order: Order) -> Vec<MatchResult> {
         let mut all_results = Vec::new();
         let mut remaining_quantity = market_order.quantity;
         let sorted_bid_prices = slfe.bids.get_all_bid_prices_sorted();
@@ -75,8 +68,7 @@ impl MarketOrderProcessor {
                 &bid_price,
                 remaining_quantity,
                 OrderDirection::Sell,
-            )
-            .await;
+            );
             for result in &results {
                 remaining_quantity -= result.quantity;
             }
@@ -95,7 +87,7 @@ impl MarketOrderProcessor {
     }
 
     /// Matches orders based on specified price levels.
-    async fn market_order_match_price_level(
+    fn market_order_match_price_level(
         slfe: Arc<Slfe>,
         market_order: &mut Order,
         price: &impl Price,
@@ -115,8 +107,7 @@ impl MarketOrderProcessor {
                 shard_id,
                 remaining_quantity,
                 &direction,
-            )
-            .await;
+            );
             let mut matched_qty = 0.0;
             for result in &results {
                 matched_qty += result.quantity;
@@ -127,7 +118,7 @@ impl MarketOrderProcessor {
     }
 
     /// match sharding
-    async fn market_order_match_sharding(
+    fn market_order_match_sharding(
         slfe: Arc<Slfe>,
         market_order: &mut Order,
         price: f64,

@@ -22,7 +22,7 @@ const CLEANUP_TASK_INTERVAL: u64 = 30;
 pub struct DAYOrderProcessor;
 
 impl DAYOrderProcessor {
-    pub async fn handle(
+    pub  fn handle(
         slfe: Arc<Slfe>,
         day_order: Order,
         trading_day_end: Instant,

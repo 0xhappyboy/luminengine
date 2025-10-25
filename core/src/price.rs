@@ -11,6 +11,8 @@
 /// - Lower ask prices have higher priority (come first in sorted collections)
 ///
 use std::cmp::Ordering;
+
+use serde::{Deserialize, Serialize};
 pub trait Price: 'static {
     /// Creates a new price instance from a floating-point value.
     ///
@@ -127,7 +129,7 @@ impl Price for AskPrice {
 }
 
 /// Price Level, an abstraction for each price level in the order book.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceLevel {
     pub price: f64,
     pub quantity: f64,

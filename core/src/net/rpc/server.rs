@@ -41,9 +41,9 @@ impl OrderBookService for OrderBookRPCService {
         let response;
         match crate::orderbook::OrderBooks::insert(
             symbol.clone(),
-            Arc::new(RwLock::new(crate::orderbook::OrderBook::new(Target {
+            Arc::new(crate::orderbook::OrderBook::new(Target {
                 symbol: symbol.clone(),
-            }))),
+            })),
         ) {
             Ok(s) => {
                 response = OrderResponse {
@@ -98,29 +98,29 @@ fn handle_order(
     order: crate::net::rpc::server::orderbook::Order,
     order_direction: OrderDirection,
 ) -> Result<Response<OrderResponse>, Status> {
-    let response;
-    match param_verif(order.clone()) {
-        Ok(_) => match OrderBooks::get_orderbook_by_symbol(order.symbol.clone()) {
-            Some(orderbook) => {
-                orderbook
-                    .write()
-                    .push_order(crate::order::Order::from_rpc_order(
-                        order.clone(),
-                        order_direction,
-                    ));
-                response = OrderResponse {
-                    id: 1,
-                    message: format!("Order {}", 1),
-                };
-                Ok(Response::new(response))
-            }
-            None => Err(Status::new(
+    let handler = || {
+        param_verif(order.clone())?;
+        if !OrderBooks::contains_symbol(order.symbol.clone()) {
+            return Err(Status::new(
                 tonic::Code::FailedPrecondition,
-                format!("orderbook does not exist").to_string(),
-            )),
-        },
-        Err(e) => {
-            return Err(e);
+                "orderbook does not exist".to_string(),
+            ));
         }
-    }
+        let orderbook =
+            OrderBooks::get_orderbook_by_symbol(order.symbol.clone()).ok_or_else(|| {
+                Status::new(tonic::Code::Internal, "Failed to get orderbook".to_string())
+            })?;
+        let internal_order = crate::order::Order::from_rpc_order(order.clone(), order_direction);
+        orderbook.add_order(internal_order).map_err(|e| {
+            Status::new(
+                tonic::Code::Internal,
+                format!("Failed to add order: {:?}", e),
+            )
+        })?;
+        Ok(OrderResponse {
+            id: 1,
+            message: "Order created successfully".to_string(),
+        })
+    };
+    handler().map(Response::new)
 }

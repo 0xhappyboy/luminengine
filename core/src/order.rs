@@ -15,7 +15,7 @@ use crate::{
     types::{UnifiedError, UnifiedResult},
 };
 /// order direction enumeration
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum OrderDirection {
     Buy,
     Sell,
@@ -86,7 +86,7 @@ where
 }
 
 /// order type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OrderType {
     Limit,
     Market,

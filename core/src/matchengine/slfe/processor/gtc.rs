@@ -14,15 +14,15 @@ impl GTCOrderProcessor {
     pub fn new(gtc_manager: Arc<GTCOrderManager>) -> Self {
         Self { gtc_manager }
     }
-    pub async fn start_gtc_manager_task(&self, gtc_manager: Arc<GTCOrderManager>) {
-        tokio::spawn(async move { gtc_manager.process_events().await });
+    pub fn start_gtc_manager_task(&self, gtc_manager: Arc<GTCOrderManager>) {
+        tokio::spawn(async move { gtc_manager.process_events() });
     }
-    pub async fn handle(slfe: Arc<Slfe>, gtc_order: Order) -> UnifiedResult<String> {
+    pub fn handle(slfe: Arc<Slfe>, gtc_order: Order) -> UnifiedResult<String> {
         let mut order = gtc_order.clone();
         // No timeout
         order.expiry = None;
         // add an order to gtc manager
-        slfe.gtc_manager.add_gtc_order(order.clone()).await?;
+        slfe.gtc_manager.add_gtc_order(order.clone())?;
         // add limit order
         // Replace the GTC type with the Limit type for processing.
         order.order_type = crate::order::OrderType::Limit;

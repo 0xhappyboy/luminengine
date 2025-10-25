@@ -11,7 +11,7 @@ pub struct LimitOrderProcessor;
 
 impl LimitOrderProcessor {
     /// Added unified entry for limit orders to the order book.
-    pub async fn add(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
+    pub fn add(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
         let start_time = Instant::now();
         let location = match order.direction {
             OrderDirection::Buy => slfe.bids.add_order(order.clone()),
@@ -39,17 +39,17 @@ impl LimitOrderProcessor {
 
     /// handle limit order
     /// Used in event managers.
-    pub async fn handle(slfe: &Slfe) -> Option<Vec<MatchResult>> {
+    pub fn handle(slfe: &Slfe) -> Option<Vec<MatchResult>> {
         let best_bid = slfe.bids.get_best_price();
         let best_ask = slfe.asks.get_best_price();
         if let (Some(bid_price), Some(ask_price)) = (best_bid, best_ask) {
             if bid_price.price >= ask_price.price {
-                return Some(Self::match_across_shards(slfe, &bid_price, &ask_price).await);
+                return Some(Self::match_across_shards(slfe, &bid_price, &ask_price));
             }
         }
         None
     }
-    async fn match_across_shards(
+    fn match_across_shards(
         slfe: &Slfe,
         bid_price: &BidPrice,
         ask_price: &AskPrice,
@@ -63,14 +63,13 @@ impl LimitOrderProcessor {
                     ask_shard_id,
                     bid_price,
                     ask_price,
-                )
-                .await;
+                );
                 all_results.extend(results);
             }
         }
         all_results
     }
-    async fn match_shard_pair(
+    fn match_shard_pair(
         slfe: &Slfe,
         bid_shard_id: usize,
         ask_shard_id: usize,
@@ -90,8 +89,7 @@ impl LimitOrderProcessor {
         };
         let original_bid_count = bid_orders.len();
         let original_ask_count = ask_orders.len();
-        let results =
-            Self::match_order_queues(slfe.clone(), &mut bid_orders, &mut ask_orders).await;
+        let results = Self::match_order_queues(slfe.clone(), &mut bid_orders, &mut ask_orders);
         if results.is_empty() {
             return results;
         }
@@ -117,7 +115,7 @@ impl LimitOrderProcessor {
         }
         results
     }
-    async fn match_order_queues(
+    fn match_order_queues(
         slfe: &Slfe,
         bid_orders: &mut VecDeque<Order>,
         ask_orders: &mut VecDeque<Order>,

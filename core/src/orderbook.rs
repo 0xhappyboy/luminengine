@@ -1,10 +1,11 @@
 use crate::{
+    market::MarketDepthSnapshot,
     matchengine::{
         MatchEngineConfig,
-        matcher::Matcher,
         slfe::{
             Slfe,
             manager::{price_change::StopOrderStatus, status::SlfeStatus},
+            sharding::OrderLocation,
         },
     },
     order::Order,
@@ -16,7 +17,7 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 
 lazy_static! {
-    static ref ORDER_BOOKS: DashMap<Target, Arc<RwLock<OrderBook>>> = DashMap::new();
+    static ref ORDER_BOOKS: DashMap<Target, Arc<OrderBook>> = DashMap::new();
 }
 
 /// order source channel enumeration
@@ -36,7 +37,7 @@ impl OrderBooks {
         // self.orderbooks.contains_key(&symbol)
         ORDER_BOOKS.contains_key(&Target::new(symbol))
     }
-    pub fn get_orderbook_by_symbol(symbol: String) -> Option<Arc<RwLock<OrderBook>>> {
+    pub fn get_orderbook_by_symbol(symbol: String) -> Option<Arc<OrderBook>> {
         if OrderBooks::contains_symbol(symbol.clone()) {
             Some(Arc::clone(
                 &ORDER_BOOKS.get(&Target { symbol: symbol }).unwrap(),
@@ -48,7 +49,7 @@ impl OrderBooks {
     pub fn order_num() -> u64 {
         ORDER_BOOKS.len().try_into().unwrap()
     }
-    pub fn insert(symbol: String, orderbook: Arc<RwLock<OrderBook>>) -> Result<String, String> {
+    pub fn insert(symbol: String, orderbook: Arc<OrderBook>) -> Result<String, String> {
         if !OrderBooks::contains_symbol(symbol.clone()) {
             ORDER_BOOKS.insert(
                 Target {
@@ -61,8 +62,8 @@ impl OrderBooks {
                     symbol: symbol.clone(),
                 })
                 .unwrap()
-                .read()
-                .enble_matcher(Matcher::new());
+                .clone()
+                .enble_matcher();
             Ok("new order book added successfully".to_string())
         } else {
             Err("symbol already exists".to_string())
@@ -85,13 +86,15 @@ impl OrderBook {
         }
     }
     // enble matcher engine
-    pub fn enble_matcher(&self, matcher: Matcher) {
-        let symbol = self.target.read().symbol.clone();
-        tokio::spawn(matcher.match_order(symbol));
+    pub fn enble_matcher(self: Arc<Self>) {
+        let s = self.clone();
+        tokio::spawn(async move {
+            let _ = s.engine.clone().start_engine().await;
+        });
     }
     /// push order specific implementation logic.
-    pub async fn push_order(&mut self, order: Order) {
-        let _ = self.engine.clone().add_order(order).await;
+    pub fn push_order(&mut self, order: Order) {
+        let _ = self.engine.clone().add_order(order);
     }
     /// matching order
     pub fn matching_order(&self) {}
@@ -100,12 +103,12 @@ impl OrderBook {
     /// order book storage
     pub fn storage() {}
 
-    pub async fn add_order(&self, order: Order) -> crate::types::UnifiedResult<String> {
-        self.engine.clone().add_order(order).await
+    pub fn add_order(&self, order: Order) -> crate::types::UnifiedResult<String> {
+        self.engine.clone().add_order(order)
     }
 
-    pub async fn cancel_order(&self, order_id: &str) {
-        self.engine.clone().cancel_order(order_id).await;
+    pub fn cancel_order(&self, order_id: &str) {
+        self.engine.clone().cancel_order(order_id);
     }
 
     pub fn add_stop_order(
@@ -157,27 +160,24 @@ impl OrderBook {
         self.engine.clone().get_active_gtc_orders()
     }
 
-    pub async fn check_ioc_feasibility(&self, order: &Order) -> (bool, f64) {
-        self.engine.clone().check_ioc_feasibility(order).await
+    pub fn check_ioc_feasibility(&self, order: &Order) -> (bool, f64) {
+        self.engine.clone().check_ioc_feasibility(order)
     }
 
     pub fn get_stop_order_status(&self, order_id: &str) -> Option<StopOrderStatus> {
         self.engine.clone().get_stop_order_status(order_id)
     }
 
-    pub fn get_engine_stats(&self) -> Arc<RwLock<SlfeStatus>> {
-        self.engine.clone().get_engine_stats()
+    pub fn get_engine_status(&self) -> Arc<RwLock<SlfeStatus>> {
+        self.engine.clone().get_engine_status()
     }
 
-    pub fn get_order_location(
-        &self,
-        order_id: &str,
-    ) -> Option<crate::matchengine::slfe::sharding::OrderLocation> {
+    pub fn get_order_location(&self, order_id: &str) -> Option<OrderLocation> {
         self.engine.clone().get_order_location(order_id)
     }
 
     pub async fn batch_cancel_orders(&self, order_ids: &[&str]) {
-        self.engine.clone().batch_cancel_orders(order_ids).await;
+        self.engine.clone().batch_cancel_orders(order_ids);
     }
 
     pub fn reload_pending_gtc_orders(&self) -> crate::types::UnifiedResult<Vec<Order>> {
@@ -189,7 +189,7 @@ impl OrderBook {
     }
 
     pub async fn cleanup_expired_orders(&self) -> crate::types::UnifiedResult<usize> {
-        self.engine.clone().cleanup_expired_orders().await
+        self.engine.clone().cleanup_expired_orders()
     }
 
     pub fn trigger_immediate_match(&self) -> crate::types::UnifiedResult<String> {
@@ -204,11 +204,8 @@ impl OrderBook {
         self.engine.clone().update_config(new_config);
     }
 
-    pub async fn get_market_depth_snapshot(
-        &self,
-        levels: Option<usize>,
-    ) -> crate::market::MarketDepthSnapshot {
-        self.engine.clone().get_market_depth_snapshot(levels).await
+    pub fn get_market_depth_snapshot(&self, levels: Option<usize>) -> MarketDepthSnapshot {
+        self.engine.clone().get_market_depth_snapshot(levels)
     }
 
     pub fn get_current_price(&self) -> f64 {
@@ -240,7 +237,7 @@ impl OrderBook {
         price: f64,
         direction: crate::order::OrderDirection,
     ) -> usize {
-        self.engine.get_order_count_by_price(price, direction).await
+        self.engine.get_order_count_by_price(price, direction)
     }
 
     pub async fn get_total_base_unit_by_price(
@@ -248,27 +245,21 @@ impl OrderBook {
         price: f64,
         direction: crate::order::OrderDirection,
     ) -> f64 {
-        self.engine
-            .get_total_base_unit_by_price(price, direction)
-            .await
+        self.engine.get_total_base_unit_by_price(price, direction)
     }
 
-    pub async fn get_total_quote_value_by_price(
+    pub fn get_total_quote_value_by_price(
         &self,
         price: f64,
         direction: crate::order::OrderDirection,
     ) -> f64 {
-        self.engine
-            .get_total_quote_unit_value(price, direction)
-            .await
+        self.engine.get_total_quote_unit_value(price, direction)
     }
 
-    pub async fn get_total_order_count_by_direction(
+    pub fn get_total_order_count_by_direction(
         &self,
         direction: Option<crate::order::OrderDirection>,
     ) -> usize {
-        self.engine
-            .get_total_order_count_by_direction(direction)
-            .await
+        self.engine.get_total_order_count_by_direction(direction)
     }
 }

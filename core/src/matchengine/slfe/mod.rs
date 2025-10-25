@@ -3,19 +3,15 @@ pub mod processor;
 pub mod sharding;
 pub mod status;
 /// Sharded lock-free event order book matching engine.
-use crossbeam::channel::{Receiver, Sender, unbounded};
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-use std::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use tokio::join;
 
 use crate::market::{MarketDepth, MarketDepthSnapshot};
+use crate::matchengine::MatchEvent;
 use crate::matchengine::slfe::manager::event::EventManager;
 use crate::matchengine::slfe::manager::expired::ExpiredOrderManager;
 use crate::matchengine::slfe::manager::gtc::GTCOrderManager;
@@ -30,11 +26,8 @@ use crate::matchengine::slfe::processor::ioc::IOCOrderProcessor;
 use crate::matchengine::slfe::processor::stop::StopOrderProcessor;
 use crate::matchengine::slfe::processor::stoplimit::StopLimitOrderProcessor;
 use crate::matchengine::slfe::sharding::{OrderLocation, OrderTreeSharding};
-use crate::matchengine::tool::math::{
-    atomic_to_f64, cal_ewma, cal_mid_price, cal_price_change, f64_to_atomic,
-};
+use crate::matchengine::tool::math::{atomic_to_f64, f64_to_atomic};
 use crate::matchengine::tool::slfe::cal_total_quote_value_for_ordertree;
-use crate::matchengine::{MatchEvent, MatchResult};
 use crate::order::{Order, OrderDirection};
 use crate::price::PriceLevel;
 use crate::types::{UnifiedError, UnifiedResult};
@@ -129,10 +122,7 @@ impl Slfe {
         tasks.push(iceberg_manager);
         // -------------------- gtc manager -------------------
         let gtc_arc_clone = self.gtc_manager.clone();
-        let gtc_manager = tokio::task::spawn_blocking(move || {
-            let runtime = tokio::runtime::Handle::current();
-            runtime.block_on(gtc_arc_clone.start_gtc_manager())
-        });
+        let gtc_manager = tokio::task::spawn_blocking(move || gtc_arc_clone.start_gtc_manager());
         // add gtc manager
         tasks.push(gtc_manager);
         // -------------------- price manager -------------------
@@ -192,26 +182,26 @@ impl Slfe {
         // -------------------- day order handler -------------------
         let day_order_self_arc_clone = Arc::clone(&self);
         tasks.push(tokio::spawn(async move {
-            ExpiredOrderManager::start_expiry_order_manager(day_order_self_arc_clone).await
+            ExpiredOrderManager::start_expiry_order_manager(day_order_self_arc_clone)
         }));
         // --------------------- depth monitor ---------------------
         let depth_self_arc_clone = Arc::clone(&self);
         // add depth monitor
         tasks.push(tokio::spawn(async move {
-            depth_self_arc_clone.start_depth_monitor().await;
+            depth_self_arc_clone.start_depth_monitor();
         }));
         for task in tasks {
-            join!(task);
+            let _ = join!(task);
         }
         Ok("Slfe Engine Started".to_string())
     }
 
-    async fn start_depth_monitor(self: Arc<Self>) {
+    fn start_depth_monitor(self: Arc<Self>) {
         let mut last_adjustment = Instant::now();
         let adjustment_interval = Duration::from_secs(2);
         let s = self.clone();
         loop {
-            let depth = MarketDepth::from_slfe(self.clone()).await;
+            let depth = MarketDepth::from_slfe(self.clone());
             // update mid price
             if let Some(mid_price) = s.price_info_manager.cal_mid_price(self.clone()) {
                 s.price_info_manager
@@ -221,15 +211,15 @@ impl Slfe {
             if s.clone().config.read().enable_auto_tuning
                 && last_adjustment.elapsed() >= adjustment_interval
             {
-                s.clone().auto_tuning(&depth).await;
+                s.clone().auto_tuning(&depth);
                 last_adjustment = Instant::now();
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            let _ = tokio::time::sleep(Duration::from_millis(500));
         }
     }
 
     /// Get the number of transactions available in the shard
-    pub async fn get_available_quantity_for_order(&self, order: &Order) -> f64 {
+    pub fn get_available_quantity_for_order(&self, order: &Order) -> f64 {
         match order.direction {
             OrderDirection::Buy => {
                 let sorted_ask_prices = self.asks.get_all_ask_prices_sorted();
@@ -280,8 +270,8 @@ impl Slfe {
     }
 
     /// auto tuning engine performance configuration.
-    async fn auto_tuning(self: Arc<Self>, depth: &MarketDepth) {
-        if (self.config.read().enable_auto_tuning) {
+    fn auto_tuning(self: Arc<Self>, depth: &MarketDepth) {
+        if self.config.read().enable_auto_tuning {
             let total_orders = depth.bid_order_count + depth.ask_order_count;
             // new batch size
             let batch_size = if total_orders > 1_000_000 {
@@ -318,10 +308,7 @@ impl Slfe {
     }
 
     /// Get a map of all price tiers relative to order quantities.
-    pub async fn get_price_level_total_order(
-        &self,
-        direction: OrderDirection,
-    ) -> BTreeMap<u64, usize> {
+    pub fn get_price_level_total_order(&self, direction: OrderDirection) -> BTreeMap<u64, usize> {
         match direction {
             OrderDirection::Buy => self.bids.get_price_level_total_order(),
             OrderDirection::Sell => self.asks.get_price_level_total_order(),
@@ -330,10 +317,7 @@ impl Slfe {
     }
 
     /// Gets a map of the sum of base units for all price levels.
-    pub async fn get_price_level_total_base_unit(
-        &self,
-        direction: OrderDirection,
-    ) -> BTreeMap<u64, f64> {
+    pub fn get_price_level_total_base_unit(&self, direction: OrderDirection) -> BTreeMap<u64, f64> {
         match direction {
             OrderDirection::Buy => self.bids.get_price_level_total_base_unit(),
             OrderDirection::Sell => self.asks.get_price_level_total_base_unit(),
@@ -342,7 +326,7 @@ impl Slfe {
     }
 
     /// Get the total value of quotes for all price levels.
-    pub async fn get_price_level_total_quote_value(
+    pub fn get_price_level_total_quote_value(
         &self,
         direction: OrderDirection,
     ) -> BTreeMap<u64, f64> {
@@ -357,7 +341,7 @@ impl Slfe {
     ///
     /// # Return
     /// * usize: order count
-    pub async fn get_order_count_by_price(&self, price: f64, direction: OrderDirection) -> usize {
+    pub fn get_order_count_by_price(&self, price: f64, direction: OrderDirection) -> usize {
         match direction {
             OrderDirection::Buy => self.bids.get_order_count_by_price(price),
             OrderDirection::Sell => self.asks.get_order_count_by_price(price),
@@ -368,7 +352,7 @@ impl Slfe {
     /// Get the total number of Base units available for trading at the specified price and in the specified trading direction (the left unit of the trading pair).
     /// # Return
     /// * f64: total base unit
-    pub async fn get_total_base_unit_by_price(&self, price: f64, direction: OrderDirection) -> f64 {
+    pub fn get_total_base_unit_by_price(&self, price: f64, direction: OrderDirection) -> f64 {
         match direction {
             OrderDirection::Buy => self.bids.get_total_base_unit_by_price(price),
             OrderDirection::Sell => self.asks.get_total_base_unit_by_price(price),
@@ -379,7 +363,7 @@ impl Slfe {
     /// Get the total value of quote units at a specified price and in a specified trading direction.
     /// # Return
     /// * f64: total quote unit value
-    pub async fn get_total_quote_unit_value(&self, price: f64, direction: OrderDirection) -> f64 {
+    pub fn get_total_quote_unit_value(&self, price: f64, direction: OrderDirection) -> f64 {
         match direction {
             OrderDirection::Buy => self.bids.get_total_quote_value_by_price(price),
             OrderDirection::Sell => self.asks.get_total_quote_value_by_price(price),
@@ -390,7 +374,7 @@ impl Slfe {
     /// Get the total value of quote units in a specified trading direction.
     /// # Return
     /// * f64: total quote unit value
-    pub async fn get_total_quote_value_all_prices(&self, direction: OrderDirection) -> f64 {
+    pub fn get_total_quote_value_all_prices(&self, direction: OrderDirection) -> f64 {
         match direction {
             OrderDirection::Buy => cal_total_quote_value_for_ordertree(&self.bids),
             OrderDirection::Sell => cal_total_quote_value_for_ordertree(&self.asks),
@@ -399,10 +383,7 @@ impl Slfe {
     }
 
     /// get the number of orders in the specified trading direction.
-    pub async fn get_total_order_count_by_direction(
-        &self,
-        direction: Option<OrderDirection>,
-    ) -> usize {
+    pub fn get_total_order_count_by_direction(&self, direction: Option<OrderDirection>) -> usize {
         match direction {
             Some(OrderDirection::Buy) => self.bids.get_total_order_count(),
             Some(OrderDirection::Sell) => self.asks.get_total_order_count(),
@@ -412,7 +393,7 @@ impl Slfe {
     }
 
     /// get market depth snapshot
-    pub async fn get_market_depth_snapshot(&self, levels: Option<usize>) -> MarketDepthSnapshot {
+    pub fn get_market_depth_snapshot(&self, levels: Option<usize>) -> MarketDepthSnapshot {
         let bid_distribution = self.bids.get_price_level_total_base_unit();
         let ask_distribution = self.asks.get_price_level_total_base_unit();
         let mut bid_levels: Vec<PriceLevel> = bid_distribution
@@ -490,8 +471,8 @@ impl Slfe {
         Ok(())
     }
 
-    pub async fn add_order(self: Arc<Self>, order: Order) -> UnifiedResult<String> {
-        OrderProcessor::handle_new_order(self.clone(), order).await
+    pub fn add_order(self: Arc<Self>, order: Order) -> UnifiedResult<String> {
+        OrderProcessor::handle_new_order(self.clone(), order)
     }
 
     pub fn add_stop_order(
@@ -541,8 +522,8 @@ impl Slfe {
         self.gtc_manager.get_active_orders()
     }
 
-    pub async fn check_ioc_feasibility(&self, order: &Order) -> (bool, f64) {
-        IOCOrderProcessor::check_ioc_feasibility(self, order).await
+    pub fn check_ioc_feasibility(&self, order: &Order) -> (bool, f64) {
+        IOCOrderProcessor::check_ioc_feasibility(self, order)
     }
 
     pub fn get_iceberg_order_status(&self, order_id: &str) -> Option<IcebergOrderStatus> {
@@ -565,7 +546,7 @@ impl Slfe {
         self.price_change_manager.get_stop_order_status(order_id)
     }
 
-    pub fn get_engine_stats(&self) -> Arc<RwLock<SlfeStatus>> {
+    pub fn get_engine_status(&self) -> Arc<RwLock<SlfeStatus>> {
         self.status_manager.status.clone()
     }
 
@@ -573,14 +554,14 @@ impl Slfe {
         self.order_location.get(order_id).map(|entry| entry.clone())
     }
 
-    pub async fn batch_cancel_orders(self: Arc<Self>, order_ids: &[&str]) {
+    pub fn batch_cancel_orders(self: Arc<Self>, order_ids: &[&str]) {
         for &order_id in order_ids {
-            self.clone().cancel_order(order_id).await;
+            self.clone().cancel_order(order_id);
         }
     }
 
-    pub async fn cancel_order(self: Arc<Self>, order_id: &str) {
-        OrderProcessor::handle_cancel_order(self.as_ref(), order_id).await;
+    pub fn cancel_order(self: Arc<Self>, order_id: &str) {
+        OrderProcessor::handle_cancel_order(self.as_ref(), order_id);
     }
 
     pub fn reload_pending_gtc_orders(&self) -> UnifiedResult<Vec<Order>> {
@@ -591,8 +572,8 @@ impl Slfe {
         self.bids.get_total_order_count() + self.asks.get_total_order_count()
     }
 
-    pub async fn cleanup_expired_orders(self: Arc<Self>) -> UnifiedResult<usize> {
-        ExpiredOrderManager::cleanup_expired_orders(self.clone()).await
+    pub fn cleanup_expired_orders(self: Arc<Self>) -> UnifiedResult<usize> {
+        ExpiredOrderManager::cleanup_expired_orders(self.clone())
     }
 
     pub fn trigger_immediate_match(&self) -> UnifiedResult<String> {

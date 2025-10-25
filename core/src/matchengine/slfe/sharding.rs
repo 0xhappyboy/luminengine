@@ -4,13 +4,14 @@ use std::{
 };
 
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     order::{Order, OrderDirection, OrderTree},
     price::{AskPrice, BidPrice, Price},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderLocation {
     pub price_key: u64,
     pub direction: OrderDirection,

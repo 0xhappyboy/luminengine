@@ -379,13 +379,7 @@ impl IcebergOrderManager {
         let slfe_clone = slfe.clone();
         let order_clone = display_order.clone();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            match rt.block_on(OrderProcessor::handle_new_order(slfe_clone, order_clone)) {
-                Ok(s) => {
-                    // .....
-                }
-                Err(e) => {}
-            }
+            OrderProcessor::handle_new_order(slfe_clone, order_clone);
         });
         tier_mut.is_active = true;
         tier_mut.display_order_id = Some(display_order.id.clone());
@@ -428,7 +422,6 @@ impl IcebergOrderManager {
                 return;
             }
         };
-
         if let Some(mut state) = cache_pool.get_iceberg_order_mut(&iceberg_order_id) {
             let tier_index =
                 match state.tiers.iter().position(|t| {
@@ -443,7 +436,6 @@ impl IcebergOrderManager {
             if tier_index >= state.tiers.len() {
                 return;
             }
-
             state.remaining_total -= filled_quantity;
             let tier = &mut state.tiers[tier_index];
             tier.filled_quantity += filled_quantity;

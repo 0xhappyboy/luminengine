@@ -13,10 +13,7 @@ use crate::{
 pub struct IOCOrderProcessor;
 
 impl IOCOrderProcessor {
-    pub async fn handle_ioc_order(
-        slfe: Arc<Slfe>,
-        ioc_order: Order,
-    ) -> UnifiedResult<Vec<MatchResult>> {
+    pub fn handle_ioc_order(slfe: Arc<Slfe>, ioc_order: Order) -> UnifiedResult<Vec<MatchResult>> {
         Self::validate_ioc_order(&ioc_order)?;
 
         println!(
@@ -30,12 +27,12 @@ impl IOCOrderProcessor {
             },
             ioc_order.price
         );
-        let results = Self::match_immediately(slfe.clone(), &ioc_order).await;
+        let results = Self::match_immediately(slfe.clone(), &ioc_order);
         Self::process_ioc_result(&ioc_order, &results);
         Ok(results)
     }
 
-    async fn match_immediately(slfe: Arc<Slfe>, ioc_order: &Order) -> Vec<MatchResult> {
+    fn match_immediately(slfe: Arc<Slfe>, ioc_order: &Order) -> Vec<MatchResult> {
         let mut results = Vec::new();
         let mut remaining_quantity = ioc_order.quantity;
 
@@ -179,7 +176,7 @@ impl IOCOrderProcessor {
         }
     }
 
-    pub async fn check_ioc_feasibility(slfe: &Slfe, order: &Order) -> (bool, f64) {
+    pub fn check_ioc_feasibility(slfe: &Slfe, order: &Order) -> (bool, f64) {
         let mut available_quantity = 0.0;
 
         match order.direction {

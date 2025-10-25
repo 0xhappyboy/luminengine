@@ -10,11 +10,11 @@ use crate::{
 
 pub struct FOKOrderProcessor;
 impl FOKOrderProcessor {
-    pub async fn handle(slfe: Arc<Slfe>, order: Order) -> Vec<MatchResult> {
+    pub fn handle(slfe: Arc<Slfe>, order: Order) -> Vec<MatchResult> {
         // Determine whether the fok order can be fully executed.
-        let available_quantity = slfe.get_available_quantity_for_order(&order).await;
+        let available_quantity = slfe.get_available_quantity_for_order(&order);
         if available_quantity >= order.quantity {
-            MarketOrderProcessor::handle(slfe.clone(), order).await
+            MarketOrderProcessor::handle(slfe.clone(), order)
         } else {
             Vec::new()
         }

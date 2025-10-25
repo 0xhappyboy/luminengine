@@ -35,7 +35,6 @@ pub struct GTCOrderManager {
 }
 
 impl GTCOrderManager {
-    
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
         Self {
@@ -49,7 +48,7 @@ impl GTCOrderManager {
         self.tx.clone()
     }
 
-    pub async fn add_gtc_order(&self, order: Order) -> UnifiedResult<String> {
+    pub fn add_gtc_order(&self, order: Order) -> UnifiedResult<String> {
         let order_id = order.id.clone();
         Self::new_persistence(&order)?;
         {
@@ -84,7 +83,7 @@ impl GTCOrderManager {
         Ok("GTC order updated successfully".to_string())
     }
 
-    pub async fn process_events(&self) {
+    pub fn process_events(&self) {
         let receiver = self.rx.lock();
         while let Ok(event) = receiver.recv() {
             match event {
@@ -120,7 +119,7 @@ impl GTCOrderManager {
         }
     }
 
-    pub async fn start_gtc_manager(&self) {
+    pub fn start_gtc_manager(&self) {
         let manager = Arc::new(self.clone());
         std::thread::spawn(move || {
             manager.process_events();

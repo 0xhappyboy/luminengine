@@ -31,7 +31,7 @@ pub struct OrderProcessor;
 
 impl OrderProcessor {
     /// a unified entry point for new orders.
-    pub async fn handle_new_order(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
+    pub fn handle_new_order(slfe: Arc<Slfe>, order: Order) -> UnifiedResult<String> {
         // verify order
         let order_verify = order.verify();
         if order_verify.is_err() {
@@ -41,12 +41,12 @@ impl OrderProcessor {
         match order.order_type {
             crate::order::OrderType::Limit => {
                 let slfe_arc_clone = slfe.clone();
-                let _ = LimitOrderProcessor::add(slfe_arc_clone, order).await;
+                let _ = LimitOrderProcessor::add(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::Market => {
                 let slfe_arc_clone = slfe.clone();
-                MarketOrderProcessor::handle(slfe_arc_clone, order).await;
+                MarketOrderProcessor::handle(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::Stop => {
@@ -61,17 +61,17 @@ impl OrderProcessor {
             }
             crate::order::OrderType::FOK => {
                 let slfe_arc_clone = slfe.clone();
-                FOKOrderProcessor::handle(slfe_arc_clone, order).await;
+                FOKOrderProcessor::handle(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::IOC => {
                 let slfe_arc_clone = slfe.clone();
-                let _ = IOCOrderProcessor::handle_ioc_order(slfe_arc_clone, order).await;
+                let _ = IOCOrderProcessor::handle_ioc_order(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::Iceberg => {
                 let slfe_arc_clone = slfe.clone();
-                let _ = IcebergOrderProcessor::handle(slfe_arc_clone, order).await;
+                let _ = IcebergOrderProcessor::handle(slfe_arc_clone, order);
                 return Ok("".to_string());
             }
             crate::order::OrderType::DAY => {
@@ -80,11 +80,10 @@ impl OrderProcessor {
                     slfe_arc_clone,
                     order,
                     tool::expiry::expiry_today_end(),
-                )
-                .await;
+                );
                 return Ok("".to_string());
             }
-            crate::order::OrderType::GTC => GTCOrderProcessor::handle(slfe, order).await,
+            crate::order::OrderType::GTC => GTCOrderProcessor::handle(slfe, order),
         }
     }
 

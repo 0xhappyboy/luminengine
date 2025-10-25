@@ -1,13 +1,12 @@
 use std::time::Instant;
 
-use crate::order::Order;
+use serde::{Deserialize, Serialize};
 
-pub mod matcher;
 pub mod slfe;
 pub mod tool;
 
 /// match engine config
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MatchEngineConfig {
     pub shard_count: usize,       // shard count
     pub batch_size: usize,        // batch size

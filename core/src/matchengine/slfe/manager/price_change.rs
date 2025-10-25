@@ -10,6 +10,7 @@ use std::{
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     matchengine::{
@@ -20,7 +21,7 @@ use crate::{
     types::{UnifiedError, UnifiedResult},
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum StopOrderStatus {
     Pending,
     Triggered,

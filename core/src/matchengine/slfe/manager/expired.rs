@@ -13,11 +13,11 @@ const CLEANUP_TASK_INTERVAL: u64 = 30;
 pub struct ExpiredOrderManager;
 
 impl ExpiredOrderManager {
-    pub async fn start_expiry_order_manager(slfe: Arc<Slfe>) {
+    pub fn start_expiry_order_manager(slfe: Arc<Slfe>) {
         let mut interval = interval(Duration::from_secs(CLEANUP_TASK_INTERVAL));
         loop {
-            interval.tick().await;
-            match Self::cleanup_expired_orders(slfe.clone()).await {
+            interval.tick();
+            match Self::cleanup_expired_orders(slfe.clone()) {
                 Ok(expired_count) if expired_count > 0 => {}
                 Err(e) => {}
                 _ => {}
@@ -25,7 +25,7 @@ impl ExpiredOrderManager {
         }
     }
 
-    pub async fn cleanup_expired_orders(slfe: Arc<Slfe>) -> UnifiedResult<usize> {
+    pub fn cleanup_expired_orders(slfe: Arc<Slfe>) -> UnifiedResult<usize> {
         let bids_arc = slfe.bids.clone();
         let asks_arc = slfe.asks.clone();
         let bid_handle = thread::spawn(move || Self::cleanup_single_direction(&bids_arc));

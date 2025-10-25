@@ -17,7 +17,7 @@ pub struct MarketDepth {
 }
 
 impl MarketDepth {
-    pub async fn from_slfe(slfe: Arc<Slfe>) -> Self {
+    pub fn from_slfe(slfe: Arc<Slfe>) -> Self {
         MarketDepth {
             bid_order_count: slfe.bids.get_total_order_count(),
             ask_order_count: slfe.asks.get_total_order_count(),
