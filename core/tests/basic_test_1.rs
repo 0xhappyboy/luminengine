@@ -1,3 +1,6 @@
+// File: basic_test_1.rs
+// Basic tests for the lock-free order book.
+
 #[cfg(test)]
 mod basic_test_1 {
     use atomic_plus::AtomicF64;
@@ -13,7 +16,7 @@ mod basic_test_1 {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    // 创建测试订单的辅助函数
+    // Helper function to create test orders
     fn create_test_order(
         id: u64,
         direction: OrderDirection,
@@ -45,95 +48,115 @@ mod basic_test_1 {
         })
     }
 
-    // 清除控制台显示的函数
+    // Function to clear the screen
     fn clear_screen() {
         print!("{esc}c", esc = 27 as char);
     }
 
     #[test]
     fn test_orderbook_basic_operations() {
-        println!("🔧 测试订单簿基本操作...");
+        println!("🔧 Testing order book basic operations...");
         let orderbook = OrderBook::new("BTC/USDT");
-        println!("📝 测试1: 添加买单");
+        println!("📝 Test 1: Adding buy order");
         let buy_order = create_test_order(1, OrderDirection::Buy, 45000.0, 1.5);
         let result = orderbook.add_order(buy_order.clone());
-        assert!(result.is_ok(), "添加买单失败: {:?}", result.err());
-        println!("📝 测试2: 添加卖单");
+        assert!(
+            result.is_ok(),
+            "Failed to add buy order: {:?}",
+            result.err()
+        );
+        println!("📝 Test 2: Adding sell order");
         let sell_order = create_test_order(2, OrderDirection::Sell, 46000.0, 2.0);
         let result = orderbook.add_order(sell_order.clone());
-        assert!(result.is_ok(), "添加卖单失败: {:?}", result.err());
-        println!("📝 测试3: 查找订单");
+        assert!(
+            result.is_ok(),
+            "Failed to add sell order: {:?}",
+            result.err()
+        );
+        println!("📝 Test 3: Finding order");
         let found_order = orderbook.find_order("ORDER-1");
-        assert!(found_order.is_some(), "查找订单失败");
-        assert_eq!(found_order.unwrap().id, "ORDER-1", "找到的订单ID不匹配");
-        println!("📝 测试4: 获取统计信息");
+        assert!(found_order.is_some(), "Failed to find order");
+        assert_eq!(
+            found_order.unwrap().id,
+            "ORDER-1",
+            "Found order ID does not match"
+        );
+        println!("📝 Test 4: Getting statistics");
         let stats = orderbook.get_stats();
         println!(
-            "统计信息: 总订单={}, 活跃订单={}, 当前订单数={}",
+            "Statistics: Total orders={}, Active orders={}, Current orders={}",
             stats.0, stats.1, stats.2
         );
-        println!("📝 测试5: 获取市场深度");
+        println!("📝 Test 5: Getting market depth");
         let depth = orderbook.get_market_depth(5);
-        println!("买单深度: {} 层", depth.bids.len());
-        println!("卖单深度: {} 层", depth.asks.len());
-        println!("✅ 基本操作测试通过！");
+        println!("Bid depth: {} levels", depth.bids.len());
+        println!("Ask depth: {} levels", depth.asks.len());
+        println!("✅ Basic operations test passed!");
     }
 
     #[test]
     fn test_orderbook_simplest() {
-        println!("🧪 测试订单簿最简逻辑...");
-        // 1. 创建订单簿
+        println!("🧪 Testing order book simplest logic...");
+        // 1. Create order book
         let orderbook = OrderBook::new("TEST/USD");
-        println!("✅ 订单簿创建成功");
-        // 2. 创建一个买单
+        println!("✅ Order book created successfully");
+        // 2. Create a buy order
         let buy_order = create_test_order(1, OrderDirection::Buy, 100.0, 1.0);
         let result = orderbook.add_order(buy_order.clone());
-        assert!(result.is_ok(), "添加买单失败: {:?}", result.err());
-        println!("✅ 买单添加成功: ID={}", buy_order.id);
-        // 3. 创建一个卖单
+        assert!(
+            result.is_ok(),
+            "Failed to add buy order: {:?}",
+            result.err()
+        );
+        println!("✅ Buy order added successfully: ID={}", buy_order.id);
+        // 3. Create a sell order
         let sell_order = create_test_order(2, OrderDirection::Sell, 101.0, 1.5);
         let result = orderbook.add_order(sell_order.clone());
-        assert!(result.is_ok(), "添加卖单失败: {:?}", result.err());
-        println!("✅ 卖单添加成功: ID={}", sell_order.id);
-        // 4. 查找订单
+        assert!(
+            result.is_ok(),
+            "Failed to add sell order: {:?}",
+            result.err()
+        );
+        println!("✅ Sell order added successfully: ID={}", sell_order.id);
+        // 4. Find orders
         let found_buy = orderbook.find_order("ORDER-1");
-        assert!(found_buy.is_some(), "查找买单失败");
+        assert!(found_buy.is_some(), "Failed to find buy order");
         assert_eq!(found_buy.unwrap().id, "ORDER-1");
-        println!("✅ 买单查找成功");
+        println!("✅ Buy order found successfully");
         let found_sell = orderbook.find_order("ORDER-2");
-        assert!(found_sell.is_some(), "查找卖单失败");
+        assert!(found_sell.is_some(), "Failed to find sell order");
         assert_eq!(found_sell.unwrap().id, "ORDER-2");
-        println!("✅ 卖单查找成功");
-        // 5. 获取统计
+        println!("✅ Sell order found successfully");
+        // 5. Get statistics
         let stats = orderbook.get_stats();
         println!(
-            "📊 统计: 总订单={}, 活跃订单={}, 当前订单={}",
+            "📊 Statistics: Total orders={}, Active orders={}, Current orders={}",
             stats.0, stats.1, stats.2
         );
-        assert!(stats.0 >= 2, "总订单数不正确");
-        assert!(stats.1 >= 2, "活跃订单数不正确");
-        // 6. 获取市场深度
+        assert!(stats.0 >= 2, "Incorrect total order count");
+        assert!(stats.1 >= 2, "Incorrect active order count");
+        // 6. Get market depth
         let depth = orderbook.get_market_depth(3);
         println!(
-            "📈 买单深度: {}层, 卖单深度: {}层",
+            "📈 Bid depth: {} levels, Ask depth: {} levels",
             depth.bids.len(),
             depth.asks.len()
         );
-        println!("🎉 最简测试全部通过！");
+        println!("🎉 All simplest tests passed!");
     }
 
     #[test]
     fn test_orderbook_realtime_display() {
-        println!("📊 测试订单簿实时显示...");
+        println!("📊 Testing order book real-time display...");
 
-        // 创建订单簿
+        // Create order book
         let orderbook = Arc::new(OrderBook::new("BTC/USDT"));
         let orderbook_clone = orderbook.clone();
 
-        // 订单计数器
+        // Order counter
         let order_counter = Arc::new(AtomicUsize::new(1));
 
-        // 启动订单生成线程
+        // Start order generation thread
         let producer_thread = {
             let orderbook = orderbook.clone();
             let order_counter = order_counter.clone();
@@ -142,11 +165,11 @@ mod basic_test_1 {
                 let mut rng = thread_rng();
                 let mut order_id = 1;
 
-                println!("🚀 开始生成订单...");
+                println!("🚀 Starting order generation...");
 
                 for _ in 0..20 {
-                    // 生成20个订单
-                    thread::sleep(Duration::from_millis(500)); // 每0.5秒生成一个
+                    // Generate 20 orders
+                    thread::sleep(Duration::from_millis(500)); // Generate one every 0.5 seconds
 
                     let direction = if rng.gen_bool(0.5) {
                         OrderDirection::Buy
@@ -154,7 +177,7 @@ mod basic_test_1 {
                         OrderDirection::Sell
                     };
 
-                    // 生成随机价格和数量
+                    // Generate random price and quantity
                     let price = if direction == OrderDirection::Buy {
                         rng.gen_range(45000.0..45500.0)
                     } else {
@@ -163,50 +186,48 @@ mod basic_test_1 {
 
                     let quantity = rng.gen_range(0.1..5.0);
 
-                    // 创建并添加订单
+                    // Create and add order
                     let order = create_test_order(order_id as u64, direction, price, quantity);
                     let result = orderbook.add_order(order.clone());
 
                     if result.is_ok() {
                         println!(
-                            "📨 已添加订单: ID={}, 方向={:?}, 价格={:.2}, 数量={:.4}",
+                            "📨 Added order: ID={}, Direction={:?}, Price={:.2}, Quantity={:.4}",
                             order.id, direction, price, quantity
                         );
                         order_counter.fetch_add(1, Ordering::Relaxed);
                         order_id += 1;
                     } else {
-                        println!("❌ 添加订单失败: {:?}", result.err());
+                        println!("❌ Failed to add order: {:?}", result.err());
                     }
                 }
 
-                println!("🛑 订单生成完成");
+                println!("🛑 Order generation completed");
             })
         };
 
-        // 显示订单簿状态的函数
+        // Function to display order book status (with in-line updates)
         fn display_orderbook_status(orderbook: &OrderBook, counter: &AtomicUsize) {
             let stats = orderbook.get_stats();
             let total_orders = stats.0;
             let active_orders = stats.1;
             let current_orders = stats.2;
-
-            // 获取市场深度
+            // Get market depth
             let depth = orderbook.get_market_depth(5);
-
-            // 构建显示表格
-            println!("\n\n");
+            // Build display table (overwrites previous output)
+            print!("\x1B[2J\x1B[1;1H"); // Clear screen and move cursor to top-left
             println!("┌─────────────────────────────────────────────────────┐");
-            println!("│               📊 订单簿实时监控系统                  │");
+            println!("│               📊 Order Book Real-Time Monitor       │");
             println!("├─────────────────────────────────────────────────────┤");
-            println!("│ 交易对: BTC/USDT                                    │");
+            println!("│ Symbol: BTC/USDT                                    │");
             println!(
-                "│ 时间: {:?}                                    │",
+                "│ Time: {:?}                                    │",
                 chrono::Local::now().format("%H:%M:%S")
             );
             println!("├─────────────────────────────────────────────────────┤");
-            println!("│                  📈 订单统计                          │");
+            println!("│                  📈 Order Statistics                │");
             println!("├─────────────┬─────────────┬─────────────┬───────────┤");
-            println!("│  总订单数   │  活跃订单   │  当前订单   │  序号     │");
+            println!("│ Total Orders│ Active Orders│Current Orders│ Sequence │");
             println!("├─────────────┼─────────────┼─────────────┼───────────┤");
             println!(
                 "│   {:>6}    │   {:>6}    │   {:>6}    │   {:>6}  │",
@@ -216,36 +237,32 @@ mod basic_test_1 {
                 counter.load(Ordering::Relaxed)
             );
             println!("├─────────────┴─────────────┴─────────────┴───────────┤");
-
-            // 显示买单深度
-            println!("│                  🟢 买单深度 (5档)                   │");
+            // Display bid depth
+            println!("│                  🟢 Bid Depth (5 levels)            │");
             println!("├─────────────┬─────────────┬─────────────┬───────────┤");
-            println!("│    价格     │    数量     │   订单数     │   级别    │");
+            println!("│    Price    │   Quantity  │ Order Count │   Level   │");
             println!("├─────────────┼─────────────┼─────────────┼───────────┤");
-
             if depth.bids.is_empty() {
-                println!("│          暂无买单                             │");
+                println!("│          No bids available                       │");
             } else {
                 for (i, level) in depth.bids.iter().enumerate() {
                     println!(
                         "│ {:>11.2} │ {:>11.4} │ {:>11} │ {:>9} │",
-                        level.price as f64 / 100.0, // 假设价格以整数存储，转换为浮点数
-                        level.quantity as f64 / 10000.0, // 假设数量以整数存储
+                        level.price as f64 / 100.0, // Assuming price stored as integer
+                        level.quantity as f64 / 10000.0, // Assuming quantity stored as integer
                         level.order_count,
                         i + 1
                     );
                 }
             }
-
-            // 显示卖单深度
+            // Display ask depth
             println!("├─────────────┴─────────────┴─────────────┴───────────┤");
-            println!("│                  🔴 卖单深度 (5档)                   │");
+            println!("│                  🔴 Ask Depth (5 levels)            │");
             println!("├─────────────┬─────────────┬─────────────┬───────────┤");
-            println!("│    价格     │    数量     │   订单数     │   级别    │");
+            println!("│    Price    │   Quantity  │ Order Count │   Level   │");
             println!("├─────────────┼─────────────┼─────────────┼───────────┤");
-
             if depth.asks.is_empty() {
-                println!("│          暂无卖单                             │");
+                println!("│          No asks available                       │");
             } else {
                 for (i, level) in depth.asks.iter().enumerate() {
                     println!(
@@ -257,98 +274,80 @@ mod basic_test_1 {
                     );
                 }
             }
-
             println!("└─────────────────────────────────────────────────────┘");
-
-            // 显示分隔线
+            // Display separator
             println!("════════════════════════════════════════════════════════");
         }
-
-        // 主显示循环
-        println!("🖥️  开始实时显示订单簿状态...");
+        // Main display loop
+        println!("🖥️  Starting real-time order book display...");
         let start_time = Instant::now();
-
         while start_time.elapsed() < Duration::from_secs(12) {
-            clear_screen();
             display_orderbook_status(&orderbook_clone, &order_counter);
-            thread::sleep(Duration::from_millis(1000)); // 每秒刷新一次
+            thread::sleep(Duration::from_millis(1000)); // Refresh every second
         }
-
-        // 等待生产者线程结束
+        // Wait for producer thread to finish
         let _ = producer_thread.join();
-
-        println!("✅ 实时显示测试完成！");
-
-        // 最终统计
+        println!("✅ Real-time display test completed!");
+        // Final statistics
         let final_stats = orderbook_clone.get_stats();
-        println!("📊 最终统计:");
-        println!("   总订单数: {}", final_stats.0);
-        println!("   活跃订单: {}", final_stats.1);
-        println!("   当前订单: {}", final_stats.2);
+        println!("📊 Final statistics:");
+        println!("   Total orders: {}", final_stats.0);
+        println!("   Active orders: {}", final_stats.1);
+        println!("   Current orders: {}", final_stats.2);
     }
 
     #[test]
     fn test_orderbook_concurrent_access() {
-        println!("⚡ 测试订单簿并发访问...");
-
+        println!("⚡ Testing order book concurrent access...");
         let orderbook = Arc::new(OrderBook::new("ETH/USDT"));
         let mut handles = vec![];
-
-        // 创建多个线程并发添加订单
+        // Create multiple threads to concurrently add orders
         for thread_id in 0..5 {
             let orderbook_clone = orderbook.clone();
             let handle = thread::spawn(move || {
                 for i in 0..10 {
-                    // 每个线程添加10个订单
+                    // Each thread adds 10 orders
                     let order_num = thread_id * 10 + i + 1;
                     let direction = if order_num % 2 == 0 {
                         OrderDirection::Buy
                     } else {
                         OrderDirection::Sell
                     };
-
                     let price = if direction == OrderDirection::Buy {
                         2500.0 + (order_num as f64 * 0.5)
                     } else {
                         2550.0 + (order_num as f64 * 0.5)
                     };
-
                     let quantity = 1.0 + (order_num as f64 * 0.1);
-
                     let order = create_test_order(order_num as u64, direction, price, quantity);
                     let result = orderbook_clone.add_order(order.clone());
-
                     if result.is_ok() {
-                        println!("线程{}: 成功添加订单 {}", thread_id, order.id);
+                        println!("Thread{}: Successfully added order {}", thread_id, order.id);
                     }
-
                     thread::sleep(Duration::from_millis(10));
                 }
             });
             handles.push(handle);
         }
 
-        // 等待所有线程完成
+        // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
         }
-
-        // 验证最终状态
+        // Verify final state
         let stats = orderbook.get_stats();
-        println!("并发测试结果:");
-        println!("  总订单数: {}", stats.0);
-        println!("  活跃订单: {}", stats.1);
-        println!("  当前订单: {}", stats.2);
-
-        assert_eq!(stats.0, 50, "总订单数不正确");
-        assert_eq!(stats.1, 50, "活跃订单数不正确");
-
-        println!("✅ 并发访问测试通过！");
+        println!("Concurrent test results:");
+        println!("  Total orders: {}", stats.0);
+        println!("  Active orders: {}", stats.1);
+        println!("  Current orders: {}", stats.2);
+        assert_eq!(stats.0, 50, "Incorrect total order count");
+        assert_eq!(stats.1, 50, "Incorrect active order count");
+        println!("✅ Concurrent access test passed!");
     }
 
     #[test]
     fn test_orderbook_realtime_async_display() {
-        println!("🔄 测试订单簿异步实时更新...");
+        println!("🔄 Testing order book asynchronous real-time updates...");
         let orderbook = Arc::new(OrderBook::new("BTC/USDT"));
         let stop_flag = Arc::new(AtomicBool::new(false));
         let buy_counter = Arc::new(AtomicU64::new(0));
@@ -359,14 +358,14 @@ mod basic_test_1 {
             let buy_counter = buy_counter.clone();
             let sell_counter = sell_counter.clone();
             thread::spawn(move || {
-                println!("📺 显示线程启动 (按 Ctrl+C 停止)...");
+                println!("📺 Display thread started (Press Ctrl+C to stop)...");
                 let mut last_display = String::new();
                 while !stop_flag.load(Ordering::Relaxed) {
                     let stats = orderbook.get_stats();
                     let depth = orderbook.get_market_depth(3);
-                    // 构建显示内容
+                    // Build display content
                     let display = format!(
-                        "\r📊 订单簿实时状态 | 总订单: {} | 活跃订单: {} | 买单: {} | 卖单: {} | 买盘: {}层 | 卖盘: {}层 | 时间: {}",
+                        "\r📊 Order Book Real-Time Status | Total Orders: {} | Active Orders: {} | Buy Orders: {} | Sell Orders: {} | Bids: {} levels | Asks: {} levels | Time: {}",
                         stats.0,
                         stats.1,
                         buy_counter.load(Ordering::Relaxed),
@@ -380,9 +379,9 @@ mod basic_test_1 {
                         std::io::Write::flush(&mut std::io::stdout()).unwrap();
                         last_display = display;
                     }
-                    thread::sleep(Duration::from_millis(100)); // 每100ms更新一次
+                    thread::sleep(Duration::from_millis(100)); // Update every 100ms
                 }
-                println!("\r✅ 显示线程停止");
+                println!("\r✅ Display thread stopped");
             })
         };
         let buy_thread = {
@@ -390,26 +389,26 @@ mod basic_test_1 {
             let stop_flag = stop_flag.clone();
             let buy_counter = buy_counter.clone();
             thread::spawn(move || {
-                println!("🛒 买单线程启动");
+                println!("🛒 Buy order thread started");
                 let mut rng = thread_rng();
-                let mut buy_id = 1000; // 买单ID从1000开始
+                let mut buy_id = 1000; // Buy order IDs start from 1000
                 while !stop_flag.load(Ordering::Relaxed) {
                     let price = rng.gen_range(45000.0..45200.0);
                     let quantity = rng.gen_range(0.1..5.0);
                     let order = create_test_order(buy_id, OrderDirection::Buy, price, quantity);
                     if let Err(e) = orderbook.add_order(order.clone()) {
-                        eprintln!("\r❌ 添加买单失败: {}", e);
+                        eprintln!("\r❌ Failed to add buy order: {}", e);
                     } else {
                         let count = buy_counter.fetch_add(1, Ordering::Relaxed);
                         if count % 10 == 0 {
-                            print!("\r🛒 已添加 {} 个买单", count);
+                            print!("\r🛒 Added {} buy orders", count);
                             std::io::Write::flush(&mut std::io::stdout()).unwrap();
                         }
                     }
                     buy_id += 1;
-                    thread::sleep(Duration::from_millis(200)); // 每200ms添加一个买单
+                    thread::sleep(Duration::from_millis(200)); // Add a buy order every 200ms
                 }
-                println!("\r✅ 买单线程停止");
+                println!("\r✅ Buy order thread stopped");
             })
         };
         let sell_thread = {
@@ -417,47 +416,53 @@ mod basic_test_1 {
             let stop_flag = stop_flag.clone();
             let sell_counter = sell_counter.clone();
             thread::spawn(move || {
-                println!("🏷️ 卖单线程启动");
+                println!("🏷️ Sell order thread started");
                 let mut rng = thread_rng();
-                let mut sell_id = 2000; // 卖单ID从2000开始
+                let mut sell_id = 2000; // Sell order IDs start from 2000
                 while !stop_flag.load(Ordering::Relaxed) {
                     let price = rng.gen_range(45250.0..45500.0);
                     let quantity = rng.gen_range(0.1..3.0);
                     let order = create_test_order(sell_id, OrderDirection::Sell, price, quantity);
                     if let Err(e) = orderbook.add_order(order.clone()) {
-                        eprintln!("\r❌ 添加卖单失败: {}", e);
+                        eprintln!("\r❌ Failed to add sell order: {}", e);
                     } else {
                         let count = sell_counter.fetch_add(1, Ordering::Relaxed);
-                        print!("\r🏷️ 已添加 {} 个卖单", count);
+                        print!("\r🏷️ Added {} sell orders", count);
                         std::io::Write::flush(&mut std::io::stdout()).unwrap();
                     }
                     sell_id += 1;
-                    thread::sleep(Duration::from_secs(1)); // 每秒添加一个卖单
+                    thread::sleep(Duration::from_secs(1)); // Add a sell order every second
                 }
-                println!("\r✅ 卖单线程停止");
+                println!("\r✅ Sell order thread stopped");
             })
         };
-        println!("\n⏱️  测试运行10秒...");
+        println!("\n⏱️  Test running for 10 seconds...");
         thread::sleep(Duration::from_secs(10));
         stop_flag.store(true, Ordering::Relaxed);
-        println!("\n🛑 停止所有线程...");
+        println!("\n🛑 Stopping all threads...");
         let _ = display_thread.join();
         let _ = buy_thread.join();
         let _ = sell_thread.join();
-        println!("\n📊 最终统计:");
+        println!("\n📊 Final statistics:");
         let stats = orderbook.get_stats();
         let depth = orderbook.get_market_depth(5);
-        println!("   总订单数: {}", stats.0);
-        println!("   活跃订单: {}", stats.1);
-        println!("   买单数量: {}", buy_counter.load(Ordering::Relaxed));
-        println!("   卖单数量: {}", sell_counter.load(Ordering::Relaxed));
-        println!("   买盘深度: {} 层", depth.bids.len());
-        println!("   卖盘深度: {} 层", depth.asks.len());
+        println!("   Total orders: {}", stats.0);
+        println!("   Active orders: {}", stats.1);
+        println!(
+            "   Buy order count: {}",
+            buy_counter.load(Ordering::Relaxed)
+        );
+        println!(
+            "   Sell order count: {}",
+            sell_counter.load(Ordering::Relaxed)
+        );
+        println!("   Bid depth: {} levels", depth.bids.len());
+        println!("   Ask depth: {} levels", depth.asks.len());
         if !depth.bids.is_empty() {
-            println!("\n🟢 买盘前3档:");
+            println!("\n🟢 Top 3 bid levels:");
             for (i, level) in depth.bids.iter().take(3).enumerate() {
                 println!(
-                    "   {}档: 价格={:.2}, 数量={:.4}, 订单数={}",
+                    "   Level {}: Price={:.2}, Quantity={:.4}, Order Count={}",
                     i + 1,
                     level.price as f64 / 100.0,
                     level.quantity as f64 / 10000.0,
@@ -466,10 +471,10 @@ mod basic_test_1 {
             }
         }
         if !depth.asks.is_empty() {
-            println!("\n🔴 卖盘前3档:");
+            println!("\n🔴 Top 3 ask levels:");
             for (i, level) in depth.asks.iter().take(3).enumerate() {
                 println!(
-                    "   {}档: 价格={:.2}, 数量={:.4}, 订单数={}",
+                    "   Level {}: Price={:.2}, Quantity={:.4}, Order Count={}",
                     i + 1,
                     level.price as f64 / 100.0,
                     level.quantity as f64 / 10000.0,
@@ -477,6 +482,6 @@ mod basic_test_1 {
                 );
             }
         }
-        println!("\n🎉 异步实时测试完成！");
+        println!("\n🎉 Asynchronous real-time test completed!");
     }
 }
