@@ -183,6 +183,11 @@ impl OrderBook {
     pub fn get_match_stats(&self) -> Arc<MatchStats> {
         Arc::new(self.match_engine.get_stats())
     }
+
+    /// is running
+    pub fn is_running(&self) -> bool {
+        !self.stopped.load(Ordering::Relaxed)
+    }
 }
 
 /// Market depth snapshot.
