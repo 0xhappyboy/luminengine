@@ -2,6 +2,7 @@
 mod tests {
     use super::*;
     use atomic_plus::AtomicF64;
+    use crossbeam::channel;
     use luminengine::orderbook::order::{Order, OrderDirection, OrderStatus, OrderType};
     use luminengine::orderbook::{OrderBook, order::AtomicOrderStatus};
     use rand::rngs::StdRng;
@@ -17,7 +18,7 @@ mod tests {
 
         // 1. Create order book
         let start_create = Instant::now();
-        let orderbook = OrderBook::new("PERF_TEST");
+        let orderbook = Arc::new(OrderBook::new("PERF_TEST"));
         let creation_time = start_create.elapsed();
         println!("✓ Order book created, time taken: {:?}", creation_time);
 
@@ -27,7 +28,8 @@ mod tests {
 
         // Fix: Clone before creating closure
         let match_count_for_callback = match_count.clone();
-        orderbook.set_match_callback(move |result| {
+        let orderbook_for_callback = orderbook.clone();
+        orderbook_for_callback.set_match_callback(move |result| {
             match_count_for_callback.fetch_add(1, Ordering::Relaxed);
         });
 
@@ -35,20 +37,20 @@ mod tests {
         const TOTAL_ORDERS: usize = 2_000_000;
         println!("📊 Preparing to add {} orders of any type...", TOTAL_ORDERS);
 
-        let mut rng = StdRng::seed_from_u64(42);
-
         // Performance statistics
         let orders_added = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let orders_processed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let errors = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         let batch_size = 10000;
 
         // 4. Start real-time display thread
         let display_orders_added = orders_added.clone();
+        let display_orders_processed = orders_processed.clone();
         let display_errors = errors.clone();
-        let display_matches = match_count.clone(); // Use original match_count
+        let display_matches = match_count.clone();
         let start_time = Instant::now();
-        let total_orders = TOTAL_ORDERS; // Copy to closure
+        let total_orders = TOTAL_ORDERS;
 
         // Create stop flag
         let display_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -62,12 +64,19 @@ mod tests {
                 let current_time = Instant::now();
                 let elapsed = current_time.duration_since(start_time);
                 let current_orders = display_orders_added.load(Ordering::Relaxed);
+                let current_orders_processed = display_orders_processed.load(Ordering::Relaxed);
                 let current_errors = display_errors.load(Ordering::Relaxed);
                 let current_matches = display_matches.load(Ordering::Relaxed);
 
                 // Calculate rates
                 let orders_per_sec = if elapsed.as_secs_f64() > 0.0 {
                     current_orders as f64 / elapsed.as_secs_f64()
+                } else {
+                    0.0
+                };
+
+                let orders_processed_per_sec = if elapsed.as_secs_f64() > 0.0 {
+                    current_orders_processed as f64 / elapsed.as_secs_f64()
                 } else {
                     0.0
                 };
@@ -107,6 +116,10 @@ mod tests {
                     orders_per_sec
                 );
                 println!(
+                    "│ Order Process Rate       │ {:>10.0} orders/sec │                 │",
+                    orders_processed_per_sec
+                );
+                println!(
                     "│ Match Rate               │ {:>10.0} matches/sec │                 │",
                     matches_per_sec
                 );
@@ -118,6 +131,10 @@ mod tests {
                 println!(
                     "│ Successfully Added       │                   │ {:>16} │",
                     current_orders
+                );
+                println!(
+                    "│ Orders Processed         │                   │ {:>16} │",
+                    current_orders_processed
                 );
                 println!(
                     "│ Failed Orders            │                   │ {:>16} │",
@@ -157,6 +174,18 @@ mod tests {
                 // Memory usage estimate
                 let estimated_memory_mb = (current_orders * 256) as f64 / 1024.0 / 1024.0;
                 println!("💾 Memory Estimate: {:.2} MB", estimated_memory_mb);
+
+                // Processing efficiency metrics
+                let processing_efficiency = if current_orders_processed > 0 {
+                    (current_matches as f64 / current_orders_processed as f64) * 100.0
+                } else {
+                    0.0
+                };
+                println!(
+                    "⚡ Processing Efficiency: {:.1}% (matches/processed)",
+                    processing_efficiency
+                );
+
                 println!("📅 Start Time: {:?}", start_time);
                 println!("⏰ Last Update: {:?}", current_time);
 
@@ -170,6 +199,8 @@ mod tests {
                 }
 
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+                std::thread::sleep(Duration::from_millis(500));
             }
 
             // Clear screen when thread ends
@@ -178,93 +209,148 @@ mod tests {
 
         let start_total = Instant::now();
 
-        // 5. Add orders in batches
-        println!("\n⚡ Starting to add orders (real-time updates above table)...");
+        println!("\n⚡ Starting order generation and processing threads...");
 
-        for batch in 0..((TOTAL_ORDERS + batch_size - 1) / batch_size) {
-            let batch_start = Instant::now();
+        let (order_sender, order_receiver) = channel::unbounded::<Vec<Arc<Order>>>();
 
-            for i in 0..batch_size {
-                let global_index = batch * batch_size + i;
-                if global_index >= TOTAL_ORDERS {
-                    break;
+        let orders_added_gen = orders_added.clone();
+        let errors_gen = errors.clone();
+        let order_sender_clone = order_sender.clone();
+
+        let generator_handle = std::thread::spawn(move || {
+            let mut rng = StdRng::seed_from_u64(42);
+
+            for batch in 0..((TOTAL_ORDERS + batch_size - 1) / batch_size) {
+                let batch_start = Instant::now();
+                let mut batch_orders = Vec::with_capacity(batch_size);
+
+                for i in 0..batch_size {
+                    let global_index = batch * batch_size + i;
+                    if global_index >= TOTAL_ORDERS {
+                        break;
+                    }
+
+                    // Randomly generate order type
+                    let order_type = match rng.gen_range(0..100) {
+                        0..=40 => OrderType::Limit,
+                        41..=60 => OrderType::Market,
+                        61..=70 => OrderType::Stop,
+                        71..=80 => OrderType::StopLimit,
+                        81..=85 => OrderType::FOK,
+                        86..=90 => OrderType::IOC,
+                        91..=95 => OrderType::Iceberg,
+                        96..=97 => OrderType::DAY,
+                        _ => OrderType::GTC,
+                    };
+
+                    let direction = if rng.gen_bool(0.5) {
+                        OrderDirection::Buy
+                    } else {
+                        OrderDirection::Sell
+                    };
+
+                    let price = if order_type == OrderType::Market {
+                        0.0
+                    } else {
+                        rng.gen_range(100.0..200.0)
+                    };
+
+                    let quantity = rng.gen_range(1.0..1000.0);
+
+                    let order = Arc::new(Order {
+                        id: format!("PERF_ORDER_{:09}", global_index),
+                        symbol: "PERF_TEST".to_string(),
+                        price: AtomicF64::new(price),
+                        direction,
+                        quantity: AtomicF64::new(quantity),
+                        remaining: AtomicF64::new(quantity),
+                        filled: AtomicF64::new(0.0),
+                        crt_time: chrono::Utc::now().to_rfc3339(),
+                        status: AtomicOrderStatus::new(OrderStatus::Pending),
+                        expiry: match order_type {
+                            OrderType::DAY => Some(Instant::now() + Duration::from_secs(86400)),
+                            _ => None,
+                        },
+                        order_type,
+                        ex: None,
+                        version: AtomicU64::new(0),
+                        timestamp_ns: 0,
+                        parent_order_id: None,
+                        priority: 0,
+                    });
+
+                    batch_orders.push(order);
                 }
 
-                // Randomly generate order type
-                let order_type = match rng.gen_range(0..100) {
-                    0..=40 => OrderType::Limit,
-                    41..=60 => OrderType::Market,
-                    61..=70 => OrderType::Stop,
-                    71..=80 => OrderType::StopLimit,
-                    81..=85 => OrderType::FOK,
-                    86..=90 => OrderType::IOC,
-                    91..=95 => OrderType::Iceberg,
-                    96..=97 => OrderType::DAY,
-                    _ => OrderType::GTC,
-                };
+                if !batch_orders.is_empty() {
+                    order_sender_clone.send(batch_orders.clone()).unwrap();
+                    orders_added_gen.fetch_add(batch_orders.len(), Ordering::Relaxed);
+                }
 
-                let direction = if rng.gen_bool(0.5) {
-                    OrderDirection::Buy
-                } else {
-                    OrderDirection::Sell
-                };
-
-                let price = if order_type == OrderType::Market {
-                    0.0
-                } else {
-                    rng.gen_range(100.0..200.0)
-                };
-
-                let quantity = rng.gen_range(1.0..1000.0);
-
-                let order = Arc::new(Order {
-                    id: format!("PERF_ORDER_{:09}", global_index),
-                    symbol: "PERF_TEST".to_string(),
-                    price: AtomicF64::new(price),
-                    direction,
-                    quantity: AtomicF64::new(quantity),
-                    remaining: AtomicF64::new(quantity),
-                    filled: AtomicF64::new(0.0),
-                    crt_time: chrono::Utc::now().to_rfc3339(),
-                    status: AtomicOrderStatus::new(OrderStatus::Pending),
-                    expiry: match order_type {
-                        OrderType::DAY => Some(Instant::now() + Duration::from_secs(86400)),
-                        _ => None,
-                    },
-                    order_type,
-                    ex: None,
-                    version: AtomicU64::new(0),
-                    timestamp_ns: 0,
-                    parent_order_id: None,
-                    priority: 0,
-                });
-
-                match orderbook.add_order(order) {
-                    Ok(_) => {
-                        orders_added.fetch_add(1, Ordering::Relaxed);
-                    }
-                    Err(_) => {
-                        errors.fetch_add(1, Ordering::Relaxed);
-                    }
+                let batch_time = batch_start.elapsed();
+                if batch_time < Duration::from_micros(10) {
+                    std::thread::sleep(Duration::from_micros(10));
                 }
             }
 
-            let batch_time = batch_start.elapsed();
-            if batch_time < Duration::from_micros(10) {}
+            drop(order_sender_clone);
+        });
+
+        let orderbook_process = orderbook.clone();
+        let orders_processed_proc = orders_processed.clone();
+        let errors_proc = errors.clone();
+
+        let num_processor_threads = 4;
+        let mut processor_handles = Vec::new();
+
+        for thread_id in 0..num_processor_threads {
+            let receiver = order_receiver.clone();
+            let orderbook_thread = orderbook_process.clone();
+            let orders_processed_thread = orders_processed_proc.clone();
+            let errors_thread = errors_proc.clone();
+
+            let handle = std::thread::spawn(move || {
+                for batch_orders in receiver {
+                    for order in batch_orders {
+                        match orderbook_thread.add_order(order) {
+                            Ok(_) => {
+                                orders_processed_thread.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(_) => {
+                                errors_thread.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                }
+            });
+
+            processor_handles.push(handle);
         }
 
-        // 6. Wait for matching engine to process
-        println!("\n⏳ Waiting for matching engine to process remaining orders (table continues real-time updates)...");
+        generator_handle.join().unwrap();
+
+        drop(order_receiver);
+        for handle in processor_handles {
+            handle.join().unwrap();
+        }
+
+        println!("\n✅ All orders generated and submitted!");
+
+        // 9. Wait for matching engine to process
+        println!("\n⏳ Waiting for matching engine to process remaining orders...");
 
         let wait_start = Instant::now();
         let mut no_progress_count = 0;
         let mut last_match_count = match_count.load(Ordering::Relaxed);
+        let mut last_orders_processed = orders_processed.load(Ordering::Relaxed);
 
         for wait_sec in 1..=10 {
             let current_matches = match_count.load(Ordering::Relaxed);
+            let current_orders_processed = orders_processed.load(Ordering::Relaxed);
             let new_matches = current_matches - last_match_count;
+            let new_orders_processed = current_orders_processed - last_orders_processed;
 
-            if new_matches == 0 {
+            if new_matches == 0 && new_orders_processed == 0 {
                 no_progress_count += 1;
                 if no_progress_count >= 3 {
                     // Stop display thread
@@ -276,6 +362,9 @@ mod tests {
             }
 
             last_match_count = current_matches;
+            last_orders_processed = current_orders_processed;
+
+            std::thread::sleep(Duration::from_secs(1));
         }
 
         // Stop display thread
@@ -285,18 +374,19 @@ mod tests {
         let _ = display_handle.join();
 
         print!("\x1B[2J\x1B[1;1H");
-        println!("⚠️  No new matches for 3 consecutive seconds, stopping wait");
+        println!("⚠️  No new matches or orders processed for 3 consecutive seconds, stopping wait");
 
-        // 7. Collect final statistics
+        // 10. Collect final statistics
         let total_elapsed = Instant::now().duration_since(start_total);
         let total_matches_count = match_count.load(Ordering::Relaxed);
         let final_orders_added = orders_added.load(Ordering::Relaxed);
+        let final_orders_processed = orders_processed.load(Ordering::Relaxed);
         let final_errors = errors.load(Ordering::Relaxed);
 
         let stats = orderbook.get_stats();
         let match_stats = orderbook.get_match_stats();
 
-        // 8. Print final report
+        // 11. Print final report
         println!("\n🎉 === Performance test completed! ===");
         println!("📊 Final Statistics Report:");
         println!("┌──────────────────────────────────────────────────────────────┐");
@@ -304,7 +394,14 @@ mod tests {
         println!("├─────────────────────────────┼───────────────────────────────┤");
         println!("│ Total Run Time              │ {:>31?} │", total_elapsed);
         println!("│ Target Orders               │ {:>31} │", TOTAL_ORDERS);
-        println!("│ Successfully Added          │ {:>31} │", final_orders_added);
+        println!(
+            "│ Successfully Added          │ {:>31} │",
+            final_orders_added
+        );
+        println!(
+            "│ Orders Processed            │ {:>31} │",
+            final_orders_processed
+        );
         println!("│ Failed Orders               │ {:>31} │", final_errors);
         println!(
             "│ Total Matches                │ {:>31} │",
@@ -316,12 +413,41 @@ mod tests {
             final_orders_added as f64 / total_elapsed.as_secs_f64()
         );
         println!(
+            "│ Average Process Rate         │ {:>28.0} orders/sec │",
+            final_orders_processed as f64 / total_elapsed.as_secs_f64()
+        );
+        println!(
             "│ Average Match Rate           │ {:>28.0} matches/sec │",
             total_matches_count as f64 / total_elapsed.as_secs_f64()
         );
         println!(
-            "│ Success Rate                 │ {:>31.2}% │",
+            "│ Processing Success Rate      │ {:>31.2}% │",
+            (final_orders_processed as f64 / final_orders_added as f64) * 100.0
+        );
+        println!(
+            "│ Overall Success Rate         │ {:>31.2}% │",
             (final_orders_added as f64 / TOTAL_ORDERS as f64) * 100.0
+        );
+        println!("└──────────────────────────────────────────────────────────────┘");
+
+        println!("\n📈 Processing Efficiency Analysis:");
+        println!("┌──────────────────────────────────────────────────────────────┐");
+        println!("│ Metric                      │ Value                         │");
+        println!("├─────────────────────────────┼───────────────────────────────┤");
+        let match_per_order = if final_orders_processed > 0 {
+            total_matches_count as f64 / final_orders_processed as f64
+        } else {
+            0.0
+        };
+        println!(
+            "│ Matches per Order           │ {:>31.2} │",
+            match_per_order
+        );
+
+        let processing_throughput = total_elapsed.as_secs_f64() / final_orders_processed as f64;
+        println!(
+            "│ Processing Throughput       │ {:>31.4} sec/order │",
+            processing_throughput
         );
         println!("└──────────────────────────────────────────────────────────────┘");
 
@@ -362,16 +488,23 @@ mod tests {
             match_stats.stop_triggers.load(Ordering::Relaxed)
         );
 
-        // 9. Verify basic functionality
+        // 12. Verify basic functionality
         println!("\n✅ Functionality Verification:");
-        assert!(orderbook.is_running(), "Matching engine should still be running");
+        assert!(
+            orderbook.is_running(),
+            "Matching engine should still be running"
+        );
         assert!(
             match_stats.orders_processed.load(Ordering::Relaxed) > 0,
             "At least some orders should have been processed"
         );
+        assert!(
+            final_orders_processed > 0,
+            "At least some orders should have been processed"
+        );
         println!("  ✓ All basic functionality verification passed");
 
-        // 10. Cleanup
+        // 13. Cleanup
         println!("\n🧹 Cleaning up resources...");
         orderbook.shutdown();
         println!("  ✓ Cleanup completed");

@@ -1,7 +1,9 @@
 pub mod order;
 use crate::matcher::{MatchEngine, MatchResult, MatchStats};
 use crate::orderbook::order::{Order, OrderDirection};
+use crossbeam::channel;
 use crossbeam::epoch::{self, Atomic, Guard, Owned};
+use num_cpus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
@@ -42,7 +44,9 @@ pub struct OrderBook {
     pub stats: Arc<OrderBookStats>,
     match_engine: Arc<MatchEngine>,
     pub stopped: Arc<AtomicBool>,
-    pub matching_thread: parking_lot::Mutex<Option<thread::JoinHandle<()>>>,
+    pub matching_threads: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
+    order_channel: channel::Sender<(Arc<Order>, u64, bool)>,
+    order_processor_threads: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
 impl OrderBook {
@@ -50,6 +54,7 @@ impl OrderBook {
     pub fn new(symbol: &str) -> Self {
         let symbol_arc: Arc<str> = Arc::from(symbol);
         let stopped = Arc::new(AtomicBool::new(false));
+        let (order_sender, order_receiver) = channel::unbounded();
         let orderbook = OrderBook {
             symbol: symbol_arc.clone(),
             bids: Arc::new(OrderTree::new(true)),
@@ -57,75 +62,162 @@ impl OrderBook {
             stats: Arc::new(OrderBookStats::new()),
             match_engine: Arc::new(MatchEngine::new()),
             stopped: stopped.clone(),
-            matching_thread: parking_lot::Mutex::new(None),
+            matching_threads: parking_lot::Mutex::new(Vec::new()),
+            order_channel: order_sender,
+            order_processor_threads: parking_lot::Mutex::new(Vec::new()),
         };
-        // Start matching engine
-        orderbook.start_matching_engine();
+        orderbook.start_order_processors(order_receiver);
+        orderbook.start_matching_engines();
         orderbook
     }
 
-    /// Start matching engine thread
-    fn start_matching_engine(&self) {
+    /// Start multiple order processor threads
+    fn start_order_processors(&self, receiver: channel::Receiver<(Arc<Order>, u64, bool)>) {
+        let num_processors = num_cpus::get().max(4);
+        for i in 0..num_processors {
+            let receiver_clone = receiver.clone();
+            let bids = self.bids.clone();
+            let asks = self.asks.clone();
+            let match_engine = self.match_engine.clone();
+            let stats = self.stats.clone();
+            let stopped = self.stopped.clone();
+            let handle = thread::spawn(move || {
+                let thread_id = i;
+                let mut processed_count = 0;
+                while !stopped.load(Ordering::Relaxed) {
+                    match receiver_clone.recv_timeout(Duration::from_millis(100)) {
+                        Ok((order, price, is_bid)) => {
+                            Self::process_single_order_sync(
+                                &bids,
+                                &asks,
+                                &match_engine,
+                                &stats,
+                                order,
+                                price,
+                                is_bid,
+                            );
+                            processed_count += 1;
+                        }
+                        Err(channel::RecvTimeoutError::Timeout) => {
+                            continue;
+                        }
+                        Err(channel::RecvTimeoutError::Disconnected) => {
+                            break;
+                        }
+                    }
+                }
+            });
+            self.order_processor_threads.lock().push(handle);
+        }
+    }
+
+    /// Synchronous processing of a single order (internal method)
+    fn process_single_order_sync(
+        bids: &OrderTree,
+        asks: &OrderTree,
+        match_engine: &MatchEngine,
+        stats: &OrderBookStats,
+        order: Arc<Order>,
+        price: u64,
+        is_bid: bool,
+    ) {
+        // Validate order
+        let quantity = order.quantity.load(Ordering::Relaxed);
+        if quantity <= 0.0 {
+            return;
+        }
+        match order.direction {
+            OrderDirection::Buy => {
+                // Add to buy tree
+                bids.add_order(order.clone(), price);
+                // Add to matching engine
+                if let Err(e) = match_engine.add_order(order.clone(), price, true) {
+                    eprintln!("Failed to add buy order to match engine: {}", e);
+                }
+            }
+            OrderDirection::Sell => {
+                // Add to sell tree
+                asks.add_order(order.clone(), price);
+                // Add to matching engine
+                if let Err(e) = match_engine.add_order(order.clone(), price, false) {
+                    eprintln!("Failed to add sell order to match engine: {}", e);
+                }
+            }
+            OrderDirection::None => {
+                return;
+            }
+        }
+        // Update statistics
+        stats.total_orders.fetch_add(1, Ordering::Relaxed);
+        stats.active_orders.fetch_add(1, Ordering::Relaxed);
+        stats.add_operations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Start multiple matching engine threads
+    fn start_matching_engines(&self) {
         let match_engine = self.match_engine.clone();
         let bids = self.bids.clone();
         let asks = self.asks.clone();
         let symbol = self.symbol.clone();
         let stopped = self.stopped.clone();
-        let handle = thread::spawn(move || {
-            let mut last_stats_time = Instant::now();
-            let stats_interval = Duration::from_secs(1);
-            while !stopped.load(Ordering::Relaxed) {
-                let start_time = Instant::now();
-                // Execute matching cycle
-                match_engine.execute_price_discovery(&bids, &asks, &symbol);
-                // Control loop frequency to avoid high CPU usage
-                let elapsed = start_time.elapsed();
-                if elapsed < Duration::from_micros(10) {
-                    thread::sleep(Duration::from_micros(10) - elapsed);
+        let num_matchers = 2;
+        for i in 0..num_matchers {
+            let match_engine_clone = match_engine.clone();
+            let bids_clone = bids.clone();
+            let asks_clone = asks.clone();
+            let symbol_clone = symbol.clone();
+            let stopped_clone = stopped.clone();
+            let handle = thread::spawn(move || {
+                let thread_id = i;
+                let mut cycle_count = 0;
+                let mut last_stats_time = Instant::now();
+                let stats_interval = Duration::from_secs(1);
+                while !stopped_clone.load(Ordering::Relaxed) {
+                    // Execute matching cycle
+                    match_engine_clone.execute_price_discovery(
+                        &bids_clone,
+                        &asks_clone,
+                        &symbol_clone,
+                    );
+                    cycle_count += 1;
+                    // Control loop frequency to avoid high CPU usage
+                    // Periodically print statistics
+                    if last_stats_time.elapsed() >= stats_interval {
+                        last_stats_time = Instant::now();
+                        if cycle_count % 100 == 0 {}
+                    }
                 }
-                // Periodically print statistics (optional)
-                if last_stats_time.elapsed() >= stats_interval {
-                    last_stats_time = Instant::now();
-                    // Can print or log statistics here
-                }
-            }
-        });
-        *self.matching_thread.lock() = Some(handle);
+            });
+            self.matching_threads.lock().push(handle);
+        }
     }
 
-    /// Adds a new order to the order book and triggers matching.
-    pub fn add_order(&self, order: Arc<Order>) -> Result<(), String> {
-        // Validate order
+    /// Asynchronously adds a new order to the order book.
+    pub fn add_order_async(&self, order: Arc<Order>) -> Result<(), String> {
+        // Fast validation
         let quantity = order.quantity.load(Ordering::Relaxed);
         if quantity <= 0.0 {
             return Err("Invalid order quantity".to_string());
         }
         let price = order.price.load(Ordering::Relaxed) as u64;
-        match order.direction {
-            OrderDirection::Buy => {
-                // Add to buy tree
-                self.bids.add_order(order.clone(), price);
-                // Add to matching engine
-                self.match_engine
-                    .add_order(order.clone(), price, true)
-                    .map_err(|e| format!("Failed to add order to match engine: {}", e))?;
-            }
-            OrderDirection::Sell => {
-                // Add to sell tree
-                self.asks.add_order(order.clone(), price);
-                // Add to matching engine
-                self.match_engine
-                    .add_order(order.clone(), price, false)
-                    .map_err(|e| format!("Failed to add order to match engine: {}", e))?;
-            }
-            OrderDirection::None => {
-                return Err("Invalid order direction".to_string());
-            }
+        let is_bid = order.direction == OrderDirection::Buy;
+        // Send to async queue
+        self.order_channel
+            .send((order, price, is_bid))
+            .map_err(|_| "Failed to send order to processing queue".to_string())?;
+        Ok(())
+    }
+
+    /// Adds a new order to the order book (synchronous, for backward compatibility).
+    pub fn add_order(&self, order: Arc<Order>) -> Result<(), String> {
+        self.add_order_async(order)
+    }
+
+    /// Batch add orders
+    pub fn add_orders_batch(&self, orders: Vec<Arc<Order>>) -> Result<(), String> {
+        for order in orders {
+            self.add_order_async(order)?;
         }
-        // Update statistics
-        self.stats.total_orders.fetch_add(1, Ordering::Relaxed);
-        self.stats.active_orders.fetch_add(1, Ordering::Relaxed);
-        self.stats.add_operations.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -137,10 +229,23 @@ impl OrderBook {
     }
 
     pub fn shutdown(&self) {
+        // Stop all components
         self.stopped.store(true, Ordering::Relaxed);
         self.match_engine.stop();
-        if let Some(handle) = self.matching_thread.lock().take() {
-            let _ = handle.join();
+        // Close order channel
+        drop(self.order_channel.clone());
+        // Wait for order processor threads
+        let mut processor_handles = self.order_processor_threads.lock();
+        for (i, handle) in processor_handles.drain(..).enumerate() {
+            if let Err(e) = handle.join() {
+                eprintln!("Error joining processor thread {}: {:?}", i, e);
+            }
+        }
+        let mut matcher_handles = self.matching_threads.lock();
+        for (i, handle) in matcher_handles.drain(..).enumerate() {
+            if let Err(e) = handle.join() {
+                eprintln!("Error joining matcher thread {}: {:?}", i, e);
+            }
         }
     }
 }
@@ -184,9 +289,17 @@ impl OrderBook {
         Arc::new(self.match_engine.get_stats())
     }
 
-    /// is running
+    /// Check if order book is running
     pub fn is_running(&self) -> bool {
         !self.stopped.load(Ordering::Relaxed)
+    }
+
+    /// Get queue status (for monitoring)
+    pub fn get_queue_status(&self) -> (usize, usize, usize) {
+        let channel_size = self.order_channel.len();
+        let processor_count = self.order_processor_threads.lock().len();
+        let matcher_count = self.matching_threads.lock().len();
+        (channel_size, processor_count, matcher_count)
     }
 }
 

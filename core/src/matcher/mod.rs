@@ -285,16 +285,62 @@ impl MatchEngine {
         }
     }
 
-    /// Add order to matching engine
+    /// Add order to matching engine (asynchronous version)
     pub(crate) fn add_order(
         &self,
         order: Arc<Order>,
         price: u64,
         is_bid: bool,
     ) -> Result<(), String> {
-        let handler = get_order_handler(order.order_type);
-        handler.add_order(order.clone(), price, is_bid, self)?;
+        // Fast validation
+        if order.quantity.load(Ordering::Relaxed) <= 0.0 {
+            return Err("Invalid order quantity".to_string());
+        }
+
+        // Fast dispatch based on order type
+        match order.order_type {
+            OrderType::Market => {
+                let mut queue = self.market_order_queue.lock();
+                queue.push_back(order.clone());
+            }
+            OrderType::IOC | OrderType::FOK => {
+                let mut queue = self.immediate_order_queue.lock();
+                queue.push(order.clone());
+            }
+            OrderType::Stop => {
+                let mut queue = self.stop_order_queue.lock();
+                queue.push_back(order.clone());
+            }
+            OrderType::StopLimit => {
+                let mut queue = self.stop_limit_order_queue.lock();
+                queue.push_back(order.clone());
+            }
+            OrderType::Iceberg => {
+                let mut map = self.iceberg_orders.lock();
+                let context = OrderMatchContext::new(order.clone(), price, is_bid);
+                map.insert(order.id.clone(), context);
+            }
+            OrderType::DAY => {
+                let mut map = self.day_orders.lock();
+                map.insert(order.id.clone(), Instant::now());
+                // For limit orders, add to pending queue
+                if price > 0 {
+                    let mut pending = self.pending_limit_orders.lock();
+                    pending.push_back(OrderMatchContext::new(order.clone(), price, is_bid));
+                }
+            }
+            _ => {
+                // Limit, GTC, etc.
+                if price > 0 {
+                    let mut pending = self.pending_limit_orders.lock();
+                    pending.push_back(OrderMatchContext::new(order.clone(), price, is_bid));
+                }
+            }
+        }
+
+        // Fast update statistics
         self.stats.orders_processed.fetch_add(1, Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -321,6 +367,8 @@ impl MatchEngine {
         symbol: &Arc<str>,
     ) {
         let start_time = Instant::now();
+
+        // First, check for cross matches
         let (best_bid, best_ask) = match_utils::get_best_prices(bids, asks);
         if let (Some(best_bid), Some(best_ask)) = (best_bid, best_ask) {
             if best_bid >= best_ask {
@@ -329,6 +377,8 @@ impl MatchEngine {
                 self.stats.cross_matches.fetch_add(1, Ordering::Relaxed);
             }
         }
+
+        // Process different order types in priority order
         let handlers: Vec<Box<dyn OrderHandler>> = vec![
             Box::new(ImmediateOrderHandler), // Highest priority: IOC/FOK
             Box::new(MarketOrderHandler),    // Market orders
@@ -339,11 +389,14 @@ impl MatchEngine {
             Box::new(DayOrderHandler),       // DAY orders
             Box::new(GTCOrderHandler),       // GTC orders
         ];
+
         for handler in handlers {
             if !self.is_running.load(Ordering::Relaxed) {
                 break;
             }
+
             if let Err(e) = handler.process_matching(self, bids, asks, symbol) {
+                // Log error but continue with other handlers
                 eprintln!(
                     "Error processing {:?} orders: {}",
                     handler.get_order_type(),
@@ -351,6 +404,8 @@ impl MatchEngine {
                 );
             }
         }
+
+        // Update latency statistics
         let latency_ns = start_time.elapsed().as_nanos() as u64;
         self.stats
             .match_latency_ns
@@ -371,6 +426,16 @@ impl MatchEngine {
     ) {
         // Generate match ID
         let match_id = self.match_id_counter.fetch_add(1, Ordering::SeqCst);
+
+        // Update statistics
+        self.stats.total_matches.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .total_volume
+            .fetch_add(quantity as u64, Ordering::Relaxed);
+        self.stats
+            .total_notional
+            .fetch_add((price as f64 * quantity) as u64, Ordering::Relaxed);
+
         // Create match result
         let match_result = MatchResult::new(
             match_id,
@@ -391,11 +456,13 @@ impl MatchEngine {
             ask_price,
             is_cross,
         );
+
         // Update order status
         aggressive.filled.fetch_add(quantity, Ordering::SeqCst);
         aggressive.remaining.fetch_sub(quantity, Ordering::SeqCst);
         passive.filled.fetch_add(quantity, Ordering::SeqCst);
         passive.remaining.fetch_sub(quantity, Ordering::SeqCst);
+
         // Check if orders are fully filled
         if aggressive.remaining.load(Ordering::Relaxed) <= 0.0 {
             aggressive
@@ -406,11 +473,13 @@ impl MatchEngine {
                 .status
                 .store(OrderStatus::Partial, Ordering::SeqCst);
         }
+
         if passive.remaining.load(Ordering::Relaxed) <= 0.0 {
             passive.status.store(OrderStatus::Filled, Ordering::SeqCst);
         } else {
             passive.status.store(OrderStatus::Partial, Ordering::SeqCst);
         }
+
         // Call match result callback (if set)
         if let Some(callback) = self.match_callback.lock().as_ref() {
             callback(match_result);
