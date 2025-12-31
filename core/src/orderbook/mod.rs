@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const MAX_ORDER_PROCESSOR_THREADS: usize = 5;
+
 /// Order book statistics.
 #[derive(Debug)]
 pub struct OrderBookStats {
@@ -44,7 +46,7 @@ pub struct OrderBook {
     pub stats: Arc<OrderBookStats>,
     match_engine: Arc<MatchEngine>,
     pub stopped: Arc<AtomicBool>,
-    pub matching_threads: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
+    pub matching_thread: parking_lot::Mutex<Option<thread::JoinHandle<()>>>,
     order_channel: channel::Sender<(Arc<Order>, u64, bool)>,
     order_processor_threads: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
 }
@@ -62,7 +64,7 @@ impl OrderBook {
             stats: Arc::new(OrderBookStats::new()),
             match_engine: Arc::new(MatchEngine::new()),
             stopped: stopped.clone(),
-            matching_threads: parking_lot::Mutex::new(Vec::new()),
+            matching_thread: parking_lot::Mutex::new(None),
             order_channel: order_sender,
             order_processor_threads: parking_lot::Mutex::new(Vec::new()),
         };
@@ -73,7 +75,7 @@ impl OrderBook {
 
     /// Start multiple order processor threads
     fn start_order_processors(&self, receiver: channel::Receiver<(Arc<Order>, u64, bool)>) {
-        let num_processors = num_cpus::get().max(4);
+        let num_processors = num_cpus::get().max(MAX_ORDER_PROCESSOR_THREADS);
         for i in 0..num_processors {
             let receiver_clone = receiver.clone();
             let bids = self.bids.clone();
@@ -82,7 +84,6 @@ impl OrderBook {
             let stats = self.stats.clone();
             let stopped = self.stopped.clone();
             let handle = thread::spawn(move || {
-                let thread_id = i;
                 let mut processed_count = 0;
                 while !stopped.load(Ordering::Relaxed) {
                     match receiver_clone.recv_timeout(Duration::from_millis(100)) {
@@ -160,36 +161,18 @@ impl OrderBook {
         let asks = self.asks.clone();
         let symbol = self.symbol.clone();
         let stopped = self.stopped.clone();
-        let num_matchers = 2;
-        for i in 0..num_matchers {
-            let match_engine_clone = match_engine.clone();
-            let bids_clone = bids.clone();
-            let asks_clone = asks.clone();
-            let symbol_clone = symbol.clone();
-            let stopped_clone = stopped.clone();
-            let handle = thread::spawn(move || {
-                let thread_id = i;
-                let mut cycle_count = 0;
-                let mut last_stats_time = Instant::now();
-                let stats_interval = Duration::from_secs(1);
-                while !stopped_clone.load(Ordering::Relaxed) {
-                    // Execute matching cycle
-                    match_engine_clone.execute_price_discovery(
-                        &bids_clone,
-                        &asks_clone,
-                        &symbol_clone,
-                    );
-                    cycle_count += 1;
-                    // Control loop frequency to avoid high CPU usage
-                    // Periodically print statistics
-                    if last_stats_time.elapsed() >= stats_interval {
-                        last_stats_time = Instant::now();
-                        if cycle_count % 100 == 0 {}
-                    }
-                }
-            });
-            self.matching_threads.lock().push(handle);
-        }
+        let match_engine_clone = match_engine.clone();
+        let bids_clone = bids.clone();
+        let asks_clone = asks.clone();
+        let symbol_clone = symbol.clone();
+        let stopped_clone = stopped.clone();
+        let handle = thread::spawn(move || {
+            while !stopped_clone.load(Ordering::Relaxed) {
+                // Execute matching cycle
+                match_engine_clone.execute_price_discovery(&bids_clone, &asks_clone, &symbol_clone);
+            }
+        });
+        *self.matching_thread.lock() = Some(handle);
     }
 
     /// Asynchronously adds a new order to the order book.
@@ -229,22 +212,18 @@ impl OrderBook {
     }
 
     pub fn shutdown(&self) {
-        // Stop all components
         self.stopped.store(true, Ordering::Relaxed);
         self.match_engine.stop();
-        // Close order channel
-        drop(self.order_channel.clone());
-        // Wait for order processor threads
         let mut processor_handles = self.order_processor_threads.lock();
         for (i, handle) in processor_handles.drain(..).enumerate() {
             if let Err(e) = handle.join() {
                 eprintln!("Error joining processor thread {}: {:?}", i, e);
             }
         }
-        let mut matcher_handles = self.matching_threads.lock();
-        for (i, handle) in matcher_handles.drain(..).enumerate() {
+        let mut matcher_handle = self.matching_thread.lock();
+        if let Some(handle) = matcher_handle.take() {
             if let Err(e) = handle.join() {
-                eprintln!("Error joining matcher thread {}: {:?}", i, e);
+                eprintln!("Error joining matcher thread: {:?}", e);
             }
         }
     }
@@ -298,7 +277,7 @@ impl OrderBook {
     pub fn get_queue_status(&self) -> (usize, usize, usize) {
         let channel_size = self.order_channel.len();
         let processor_count = self.order_processor_threads.lock().len();
-        let matcher_count = self.matching_threads.lock().len();
+        let matcher_count = 1;
         (channel_size, processor_count, matcher_count)
     }
 }
@@ -364,7 +343,6 @@ impl OrderTree {
                 .load(Ordering::Relaxed, guard)
                 .as_ref()
                 .unwrap();
-
             order_queue.add_order(order.clone(), guard);
         }
         // Update statistics.
