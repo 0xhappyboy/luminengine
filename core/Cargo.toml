@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["happyboy <superhappyboy1995@gmail.com>"]
 description = "A high-performance financial quantitative trading order book matching framework."
 keywords = ["finance", "trade", "quantify", "orderbook"]
-license = "GPL-3.0"
+license = "AGPL-3.0"
 readme = "README.md"
 repository = "https://github.com/0xhappyboy/luminengine/tree/main/core"
 
