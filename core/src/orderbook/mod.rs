@@ -40,7 +40,7 @@ pub struct OrderBook {
     pub asks: Arc<OrderTree>,
     /// Statistics for the order book.
     pub stats: Arc<OrderBookStats>,
-    pub match_engine: Arc<MatchEngine>,
+    match_engine: Arc<MatchEngine>,
     pub stopped: Arc<AtomicBool>,
     pub matching_thread: parking_lot::Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -48,7 +48,7 @@ pub struct OrderBook {
 impl OrderBook {
     /// Creates a new order book for the given symbol with built-in matching engine.
     pub fn new(symbol: &str) -> Self {
-        let symbol_arc: Arc<str> = Arc::from(symbol); // Explicit type specification
+        let symbol_arc: Arc<str> = Arc::from(symbol);
         let stopped = Arc::new(AtomicBool::new(false));
         let orderbook = OrderBook {
             symbol: symbol_arc.clone(),

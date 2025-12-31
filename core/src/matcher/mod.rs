@@ -242,7 +242,7 @@ impl PriceLevelMatcher {
 }
 
 /// Matching engine
-pub struct MatchEngine {
+pub(crate) struct MatchEngine {
     // Order queues
     pending_limit_orders: parking_lot::Mutex<VecDeque<OrderMatchContext>>,
     market_order_queue: parking_lot::Mutex<VecDeque<Arc<Order>>>,
@@ -286,7 +286,12 @@ impl MatchEngine {
     }
 
     /// Add order to matching engine
-    pub fn add_order(&self, order: Arc<Order>, price: u64, is_bid: bool) -> Result<(), String> {
+    pub(crate) fn add_order(
+        &self,
+        order: Arc<Order>,
+        price: u64,
+        is_bid: bool,
+    ) -> Result<(), String> {
         let handler = get_order_handler(order.order_type);
         handler.add_order(order.clone(), price, is_bid, self)?;
         self.stats.orders_processed.fetch_add(1, Ordering::Relaxed);
@@ -309,7 +314,12 @@ impl MatchEngine {
         }
     }
 
-    pub fn execute_price_discovery(&self, bids: &OrderTree, asks: &OrderTree, symbol: &Arc<str>) {
+    pub(crate) fn execute_price_discovery(
+        &self,
+        bids: &OrderTree,
+        asks: &OrderTree,
+        symbol: &Arc<str>,
+    ) {
         let start_time = Instant::now();
         let (best_bid, best_ask) = match_utils::get_best_prices(bids, asks);
         if let (Some(best_bid), Some(best_ask)) = (best_bid, best_ask) {
@@ -423,12 +433,12 @@ impl MatchEngine {
     }
 
     /// Stop matching engine
-    pub fn stop(&self) {
+    pub(crate) fn stop(&self) {
         self.is_running.store(false, Ordering::SeqCst);
     }
 
     /// Get statistics
-    pub fn get_stats(&self) -> MatchStats {
+    pub(crate) fn get_stats(&self) -> MatchStats {
         MatchStats {
             total_matches: AtomicU64::new(self.stats.total_matches.load(Ordering::Relaxed)),
             total_volume: AtomicU64::new(self.stats.total_volume.load(Ordering::Relaxed)),
