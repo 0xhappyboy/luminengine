@@ -1,10 +1,33 @@
 pub mod order;
-
+use crate::matcher::{MatchEngine, MatchResult, MatchStats};
+use crate::orderbook::order::{Order, OrderDirection};
 use crossbeam::epoch::{self, Atomic, Guard, Owned};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use crate::orderbook::order::{Order, OrderDirection};
+/// Order book statistics.
+#[derive(Debug)]
+pub struct OrderBookStats {
+    /// Total number of orders.
+    pub total_orders: AtomicUsize,
+    /// Number of active orders.
+    pub active_orders: AtomicUsize,
+    /// Number of add operations.
+    pub add_operations: AtomicU64,
+}
+
+impl OrderBookStats {
+    /// Creates new statistics.
+    pub fn new() -> Self {
+        OrderBookStats {
+            total_orders: AtomicUsize::new(0),
+            active_orders: AtomicUsize::new(0),
+            add_operations: AtomicU64::new(0),
+        }
+    }
+}
 
 /// A completely lock-free order book core structure.
 #[derive(Debug)]
@@ -17,41 +40,118 @@ pub struct OrderBook {
     pub asks: Arc<OrderTree>,
     /// Statistics for the order book.
     pub stats: Arc<OrderBookStats>,
+    pub match_engine: Arc<MatchEngine>,
+    pub stopped: Arc<AtomicBool>,
+    pub matching_thread: parking_lot::Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl OrderBook {
-    /// Creates a new order book for the given symbol.
+    /// Creates a new order book for the given symbol with built-in matching engine.
     pub fn new(symbol: &str) -> Self {
-        OrderBook {
-            symbol: Arc::from(symbol),
-            bids: Arc::new(OrderTree::new(true)), // true for buy side, price descending
-            asks: Arc::new(OrderTree::new(false)), // false for sell side, price ascending
+        let symbol_arc: Arc<str> = Arc::from(symbol); // Explicit type specification
+        let stopped = Arc::new(AtomicBool::new(false));
+        let orderbook = OrderBook {
+            symbol: symbol_arc.clone(),
+            bids: Arc::new(OrderTree::new(true)),
+            asks: Arc::new(OrderTree::new(false)),
             stats: Arc::new(OrderBookStats::new()),
-        }
+            match_engine: Arc::new(MatchEngine::new()),
+            stopped: stopped.clone(),
+            matching_thread: parking_lot::Mutex::new(None),
+        };
+        // Start matching engine
+        orderbook.start_matching_engine();
+        orderbook
     }
 
-    /// Adds a new order to the order book.
+    /// Start matching engine thread
+    fn start_matching_engine(&self) {
+        let match_engine = self.match_engine.clone();
+        let bids = self.bids.clone();
+        let asks = self.asks.clone();
+        let symbol = self.symbol.clone();
+        let stopped = self.stopped.clone();
+        let handle = thread::spawn(move || {
+            let mut last_stats_time = Instant::now();
+            let stats_interval = Duration::from_secs(1);
+            while !stopped.load(Ordering::Relaxed) {
+                let start_time = Instant::now();
+                // Execute matching cycle
+                match_engine.execute_price_discovery(&bids, &asks, &symbol);
+                // Control loop frequency to avoid high CPU usage
+                let elapsed = start_time.elapsed();
+                if elapsed < Duration::from_micros(10) {
+                    thread::sleep(Duration::from_micros(10) - elapsed);
+                }
+                // Periodically print statistics (optional)
+                if last_stats_time.elapsed() >= stats_interval {
+                    last_stats_time = Instant::now();
+                    // Can print or log statistics here
+                }
+            }
+        });
+        *self.matching_thread.lock() = Some(handle);
+    }
+
+    /// Adds a new order to the order book and triggers matching.
     pub fn add_order(&self, order: Arc<Order>) -> Result<(), String> {
+        // Validate order
+        let quantity = order.quantity.load(Ordering::Relaxed);
+        if quantity <= 0.0 {
+            return Err("Invalid order quantity".to_string());
+        }
         let price = order.price.load(Ordering::Relaxed) as u64;
-        // Add to the appropriate order tree based on direction.
         match order.direction {
             OrderDirection::Buy => {
+                // Add to buy tree
                 self.bids.add_order(order.clone(), price);
+                // Add to matching engine
+                self.match_engine
+                    .add_order(order.clone(), price, true)
+                    .map_err(|e| format!("Failed to add order to match engine: {}", e))?;
             }
             OrderDirection::Sell => {
+                // Add to sell tree
                 self.asks.add_order(order.clone(), price);
+                // Add to matching engine
+                self.match_engine
+                    .add_order(order.clone(), price, false)
+                    .map_err(|e| format!("Failed to add order to match engine: {}", e))?;
             }
             OrderDirection::None => {
                 return Err("Invalid order direction".to_string());
             }
         }
-        // Update statistics.
+        // Update statistics
         self.stats.total_orders.fetch_add(1, Ordering::Relaxed);
         self.stats.active_orders.fetch_add(1, Ordering::Relaxed);
         self.stats.add_operations.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
+    pub fn set_match_callback<F>(&self, callback: F)
+    where
+        F: Fn(MatchResult) + Send + Sync + 'static,
+    {
+        self.match_engine.set_match_callback(callback);
+    }
+
+    pub fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+        self.match_engine.stop();
+        if let Some(handle) = self.matching_thread.lock().take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for OrderBook {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl OrderBook {
     /// Searches for an order by its ID.
     pub fn find_order(&self, order_id: &str) -> Option<Arc<Order>> {
         // Search in both buy and sell trees.
@@ -70,7 +170,6 @@ impl OrderBook {
         let active_orders = self.stats.active_orders.load(Ordering::Relaxed);
         let bid_count = self.bids.size.load(Ordering::Relaxed);
         let ask_count = self.asks.size.load(Ordering::Relaxed);
-
         (total_orders, active_orders, bid_count + ask_count)
     }
 
@@ -80,19 +179,42 @@ impl OrderBook {
         let asks = self.asks.get_price_levels(levels);
         MarketDepth { bids, asks, levels }
     }
+
+    pub fn get_match_stats(&self) -> Arc<MatchStats> {
+        Arc::new(self.match_engine.get_stats())
+    }
+}
+
+/// Market depth snapshot.
+#[derive(Debug, Clone)]
+pub struct MarketDepth {
+    /// Buy-side depth.
+    pub bids: Vec<PriceLevelData>,
+    /// Sell-side depth.
+    pub asks: Vec<PriceLevelData>,
+    /// Number of depth levels.
+    pub levels: usize,
+}
+
+/// Price level data.
+#[derive(Debug, Clone)]
+pub struct PriceLevelData {
+    pub price: u64,
+    pub quantity: u64,
+    pub order_count: usize,
 }
 
 /// Lock-free order tree (based on skip list).
 #[derive(Debug)]
 pub struct OrderTree {
     /// Head node of the skip list.
-    head: Atomic<Node>,
+    pub head: Atomic<Node>,
     /// Maximum level of the skip list.
-    max_level: usize,
+    pub max_level: usize,
     /// Number of orders in the tree.
-    size: AtomicUsize,
+    pub size: AtomicUsize,
     /// Whether this tree is for buy orders.
-    is_bid: bool,
+    pub is_bid: bool,
 }
 
 impl OrderTree {
@@ -248,17 +370,17 @@ impl OrderTree {
 
 /// Skip list node.
 #[derive(Debug)]
-struct Node {
+pub struct Node {
     /// Price key.
-    price: u64,
+    pub price: u64,
     /// All orders at this price level.
-    orders: Atomic<OrderQueue>,
+    pub orders: Atomic<OrderQueue>,
     /// Forward pointer array.
-    forward: Vec<Atomic<Node>>,
+    pub forward: Vec<Atomic<Node>>,
     /// Node marked flag.
-    marked: AtomicBool,
+    pub marked: AtomicBool,
     /// Node fully linked flag.
-    fully_linked: AtomicBool,
+    pub fully_linked: AtomicBool,
 }
 
 impl Node {
@@ -280,15 +402,15 @@ impl Node {
 
 /// Lock-free order queue.
 #[derive(Debug)]
-struct OrderQueue {
+pub struct OrderQueue {
     /// Head of the queue.
-    head: Atomic<OrderNode>,
+    pub head: Atomic<OrderNode>,
     /// Tail of the queue.
-    tail: Atomic<OrderNode>,
+    pub tail: Atomic<OrderNode>,
     /// Length of the queue.
-    length: AtomicUsize,
+    pub length: AtomicUsize,
     /// Total quantity in the queue.
-    total_quantity: AtomicU64,
+    pub total_quantity: AtomicU64,
 }
 
 impl OrderQueue {
@@ -340,50 +462,9 @@ impl OrderQueue {
 
 /// Order node in the queue.
 #[derive(Debug)]
-struct OrderNode {
+pub struct OrderNode {
     /// Reference to the order.
-    order: Arc<Order>,
+    pub order: Arc<Order>,
     /// Next order node.
-    next: Atomic<OrderNode>,
-}
-
-/// Order book statistics.
-#[derive(Debug)]
-pub struct OrderBookStats {
-    /// Total number of orders.
-    pub total_orders: AtomicUsize,
-    /// Number of active orders.
-    pub active_orders: AtomicUsize,
-    /// Number of add operations.
-    pub add_operations: AtomicU64,
-}
-
-impl OrderBookStats {
-    /// Creates new statistics.
-    fn new() -> Self {
-        OrderBookStats {
-            total_orders: AtomicUsize::new(0),
-            active_orders: AtomicUsize::new(0),
-            add_operations: AtomicU64::new(0),
-        }
-    }
-}
-
-/// Market depth snapshot.
-#[derive(Debug, Clone)]
-pub struct MarketDepth {
-    /// Buy-side depth.
-    pub bids: Vec<PriceLevelData>,
-    /// Sell-side depth.
-    pub asks: Vec<PriceLevelData>,
-    /// Number of depth levels.
-    pub levels: usize,
-}
-
-/// Price level data.
-#[derive(Debug, Clone)]
-pub struct PriceLevelData {
-    pub price: u64,
-    pub quantity: u64,
-    pub order_count: usize,
+    pub next: Atomic<OrderNode>,
 }

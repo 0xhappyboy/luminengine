@@ -1,8 +1,5 @@
-// File: basic_test_1.rs
-// Basic tests for the lock-free order book.
-
 #[cfg(test)]
-mod basic_test_1 {
+mod basic_test {
     use atomic_plus::AtomicF64;
     use luminengine::orderbook::OrderBook;
     use luminengine::orderbook::order::{

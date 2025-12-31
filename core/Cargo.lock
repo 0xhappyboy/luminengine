@@ -691,10 +691,12 @@ dependencies = [
  "axum 0.8.5",
  "chrono",
  "crossbeam",
+ "crossbeam-channel",
  "dashmap",
  "lazy_static",
  "num_cpus",
  "parking_lot",
+ "priority-queue",
  "prost",
  "rand 0.9.2",
  "serde",
@@ -849,6 +851,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "priority-queue"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0bda9164fe05bc9225752d54aae413343c36f684380005398a6a8fde95fe785"
+dependencies = [
+ "autocfg",
+ "indexmap 1.9.3",
 ]
 
 [[package]]
